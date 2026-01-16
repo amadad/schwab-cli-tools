@@ -18,7 +18,8 @@ uv run schwab-market-auth
 ```
 
 Tokens live under `~/.schwab-cli-tools/tokens` by default (override with
-`SCHWAB_CLI_DATA_DIR`, `SCHWAB_TOKEN_PATH`, `SCHWAB_MARKET_TOKEN_PATH`). Refresh
+`SCHWAB_CLI_DATA_DIR`, `SCHWAB_TOKEN_PATH`, `SCHWAB_MARKET_TOKEN_PATH`). Reports
+default to `~/.schwab-cli-tools/reports` (override `SCHWAB_REPORT_DIR`). Refresh
 tokens expire after 7 days.
 
 ## CLI Contract
@@ -39,12 +40,16 @@ response envelope.
 - market
 - auth
 - doctor
+- report [--output PATH] [--no-market]
 - accounts
 - buy [ACCOUNT] SYMBOL QTY [--limit PRICE] [--dry-run] [--yes]
 - sell [ACCOUNT] SYMBOL QTY [--limit PRICE] [--dry-run] [--yes]
 - orders [ACCOUNT] [--json|--text]
 
 Default account: set `SCHWAB_DEFAULT_ACCOUNT` to omit `ACCOUNT` for buy/sell/orders.
+
+Report output defaults to `~/.schwab-cli-tools/reports` (override with
+`--output` or `SCHWAB_REPORT_DIR`). Use `--no-market` to skip market data.
 
 ### JSON Envelope
 

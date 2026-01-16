@@ -188,3 +188,19 @@ class TestCLIArgParsing:
                 main(["accounts"])
 
             mock_list.assert_called_once_with(output_mode="text")
+
+    def test_main_parses_report_command(self):
+        """Test main function parses report command."""
+        from unittest.mock import patch
+
+        with patch("src.schwab_client.cli.generate_report") as mock_report:
+            from src.schwab_client.cli import main
+
+            with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
+                main(["report"])
+
+            mock_report.assert_called_once_with(
+                output_mode="text",
+                output_path=None,
+                include_market=True,
+            )

@@ -13,6 +13,7 @@ Usage:
     schwab market [--json|--text]             Show aggregated market signals
     schwab auth [--json|--text]               Check authentication status
     schwab doctor [--json|--text]             Run diagnostics for auth/config
+    schwab report [--output PATH] [--no-market] [--json|--text]
     schwab buy [ACCOUNT] SYMBOL QTY [--limit PRICE] [--dry-run] [--yes]
     schwab sell [ACCOUNT] SYMBOL QTY [--limit PRICE] [--dry-run] [--yes]
     schwab orders [ACCOUNT]                   Show open orders
@@ -24,6 +25,7 @@ import json
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -36,14 +38,21 @@ from src.core.market_service import (
     get_sector_performance,
     get_vix,
 )
+from src.core.portfolio_service import (
+    analyze_allocation,
+    build_account_balances,
+    build_performance_report,
+    build_portfolio_summary,
+)
 
 from .auth import TokenManager, get_authenticated_client, resolve_data_dir, resolve_token_path
-from .client import SchwabClientWrapper
+from .client import MONEY_MARKET_SYMBOLS, SchwabClientWrapper
 from .market_auth import get_market_client, resolve_market_token_path
 
 SCHEMA_VERSION = 1
 OUTPUT_ENV_VAR = "SCHWAB_OUTPUT"
 DEFAULT_ACCOUNT_ENV_VAR = "SCHWAB_DEFAULT_ACCOUNT"
+REPORT_DIR_ENV_VAR = "SCHWAB_REPORT_DIR"
 
 
 def build_response(
@@ -108,6 +117,48 @@ def resolve_market_client():
         raise ConfigError(
             "Market data not authenticated. Run 'schwab-market-auth' to authenticate."
         ) from exc
+
+
+def resolve_report_dir() -> Path:
+    """Resolve the directory where reports are stored."""
+    env_dir = os.getenv(REPORT_DIR_ENV_VAR)
+    if env_dir:
+        return Path(env_dir).expanduser()
+    return resolve_data_dir() / "reports"
+
+
+def resolve_report_path(output_path: str | None, *, timestamp: datetime | None = None) -> Path:
+    """Resolve the report output path, defaulting to the report directory."""
+    if output_path:
+        path = Path(output_path).expanduser()
+    else:
+        ts = timestamp or datetime.now()
+        path = resolve_report_dir() / f"report-{ts.strftime('%Y%m%d-%H%M%S')}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _account_display_name(account_number: str) -> str:
+    label = secure_config.get_account_label(account_number)
+    if label:
+        return label
+    if len(account_number) > 4:
+        return f"Account (...{account_number[-4:]})"
+    return f"Account ({account_number})"
+
+
+def _sanitize_summary_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sanitized: list[dict[str, Any]] = []
+    for pos in positions:
+        entry = dict(pos)
+        account_number = entry.pop("account_number", None)
+        if account_number:
+            entry["account_number_masked"] = secure_config.mask_account_number(
+                str(account_number)
+            )
+            entry["account_number_last4"] = str(account_number)[-4:]
+        sanitized.append(entry)
+    return sanitized
 
 
 def parse_trade_args(args: list[str], command: str) -> tuple[str, str, int]:
@@ -419,6 +470,72 @@ def show_doctor(*, output_mode: str) -> None:
 
     except Exception as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
+
+
+def generate_report(
+    *,
+    output_mode: str,
+    output_path: str | None,
+    include_market: bool,
+) -> None:
+    """Generate a portfolio report and save it to disk."""
+    command = "report"
+    try:
+        timestamp = datetime.now()
+        raw_client = get_authenticated_client()
+        client = SchwabClientWrapper(raw_client)
+        accounts = client.get_all_accounts_full()
+
+        summary = build_portfolio_summary(accounts, _account_display_name, MONEY_MARKET_SYMBOLS)
+        summary["positions"] = _sanitize_summary_positions(summary.get("positions", []))
+
+        balances = build_account_balances(accounts, _account_display_name, MONEY_MARKET_SYMBOLS)
+        allocation = analyze_allocation(accounts)
+        performance = build_performance_report(accounts, MONEY_MARKET_SYMBOLS)
+
+        report = {
+            "generated_at": timestamp.isoformat(),
+            "portfolio": {
+                "summary": summary,
+                "balances": balances,
+                "allocation": allocation,
+                "performance": performance,
+            },
+        }
+
+        warnings: list[str] = []
+        if include_market:
+            try:
+                market_client = resolve_market_client()
+                report["market"] = get_market_signals(market_client)
+            except Exception as exc:
+                warnings.append("market_data_unavailable")
+                report["market_error"] = str(exc)
+
+        if warnings:
+            report["warnings"] = warnings
+
+        report_path = resolve_report_path(output_path, timestamp=timestamp)
+        report_path.write_text(json.dumps(report, indent=2))
+
+        if output_mode == "json":
+            print_json_response(command, data={"report_path": str(report_path), "report": report})
+            return
+
+        print(f"\n{'=' * 60}")
+        print("REPORT SAVED")
+        print(f"{'=' * 60}")
+        print(f"Path: {report_path}")
+        print(f"Total Value: ${summary['total_value']:,.2f}")
+        print(f"Total Cash:  ${summary['total_cash']:,.2f}")
+        print(f"Positions:   {summary['position_count']}")
+        if warnings:
+            print(f"Warnings:   {', '.join(warnings)}")
+        print()
+
+    except Exception as exc:
+        handle_cli_error(exc, output_mode=output_mode, command=command)
+
 
 
 def list_accounts(*, output_mode: str) -> None:
@@ -992,6 +1109,7 @@ Commands:
   market        Show aggregated market signals
   auth          Check authentication status
   doctor        Run diagnostics for auth/config
+  report        Generate a portfolio report
   accounts      List available account aliases
   buy           Buy shares (market or limit)
   sell          Sell shares (market or limit)
@@ -1010,6 +1128,7 @@ Examples:
   schwab market --json                   Aggregated market signals
   schwab vix                             VIX interpretation
   schwab doctor                          Auth/config diagnostics
+  schwab report                          Save a portfolio report
   schwab accounts                        List account aliases
   schwab buy acct_trading AAPL 10        Market buy
   schwab buy AAPL 10 --yes               Market buy using {DEFAULT_ACCOUNT_ENV_VAR}
@@ -1048,6 +1167,21 @@ Examples:
     # Doctor command
     subparsers.add_parser(
         "doctor", help="Run diagnostics", parents=[common_parser]
+    )
+
+    # Report command
+    report_parser = subparsers.add_parser(
+        "report", help="Generate report", parents=[common_parser]
+    )
+    report_parser.add_argument(
+        "--output",
+        "-o",
+        help="Output path for report JSON (defaults to ~/.schwab-cli-tools/reports)",
+    )
+    report_parser.add_argument(
+        "--no-market",
+        action="store_true",
+        help="Skip market data in the report",
     )
 
     # Positions command
@@ -1133,6 +1267,12 @@ Examples:
         check_auth(output_mode=output_mode)
     elif parsed.command == "doctor":
         show_doctor(output_mode=output_mode)
+    elif parsed.command == "report":
+        generate_report(
+            output_mode=output_mode,
+            output_path=parsed.output,
+            include_market=not parsed.no_market,
+        )
     elif parsed.command == "accounts":
         list_accounts(output_mode=output_mode)
     elif parsed.command == "buy":

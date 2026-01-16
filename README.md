@@ -43,6 +43,7 @@ uv run schwab indices
 uv run schwab sectors
 uv run schwab market --json
 uv run schwab doctor
+uv run schwab report
 uv run schwab balance
 uv run schwab accounts
 uv run schwab buy ACCOUNT SYMBOL QTY --yes
@@ -51,6 +52,9 @@ uv run schwab orders ACCOUNT
 ```
 
 See `CLAUDE.md` for the CLI contract and JSON schema.
+
+`schwab report` saves a JSON snapshot to `~/.schwab-cli-tools/reports` by default.
+Use `--output PATH` to override or `--no-market` to skip market data.
 
 ## Agent Skill
 
@@ -69,6 +73,9 @@ export SCHWAB_DEFAULT_ACCOUNT=acct_trading
 
 # Optional data directory (defaults to ~/.schwab-cli-tools)
 export SCHWAB_CLI_DATA_DIR=~/.schwab-cli-tools
+
+# Optional report directory (defaults to ~/.schwab-cli-tools/reports)
+export SCHWAB_REPORT_DIR=~/.schwab-cli-tools/reports
 
 # Optional token paths (override data dir)
 export SCHWAB_TOKEN_PATH=~/.schwab-cli-tools/tokens/schwab_token.json
@@ -92,10 +99,10 @@ CLAUDE.md           # CLI contract + agent notes
 
 ## Local Data
 
-Runtime data (tokens) is stored under `~/.schwab-cli-tools/` by default. Override
-with `SCHWAB_CLI_DATA_DIR`, or set explicit token paths via `SCHWAB_TOKEN_PATH` and
-`SCHWAB_MARKET_TOKEN_PATH`. Use `config/accounts.template.json` to create your local
-`config/accounts.json`.
+Runtime data (tokens, reports) is stored under `~/.schwab-cli-tools/` by default.
+Override with `SCHWAB_CLI_DATA_DIR`, set `SCHWAB_REPORT_DIR`, or set explicit token
+paths via `SCHWAB_TOKEN_PATH` and `SCHWAB_MARKET_TOKEN_PATH`. Use
+`config/accounts.template.json` to create your local `config/accounts.json`.
 
 ## Development
 
