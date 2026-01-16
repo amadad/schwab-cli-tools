@@ -1,0 +1,41 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Node dependencies
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Local data (runtime artifacts if stored in repo)
+private/
+tokens/
+reports/
+
+# Local agent skills (project-specific)
+.pi/skills/schwab-cli-tools/
+
+# Account configuration with real numbers
+config/accounts.json
+config/*_private.md
+config/*_private.py
+
+# Sensitive files
+*.enc
+*.pem
+*.key
+*_tokens.json
+.key
+
+# Test/debug files
+debug_*.py

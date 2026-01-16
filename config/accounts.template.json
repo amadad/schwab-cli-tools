@@ -1,0 +1,70 @@
+{
+  "$schema": "./accounts.schema.json",
+  "accounts": {
+    "acct_trading": {
+      "account_number": "XXXXXXXX",
+      "name": "Example.Trading - Brokerage",
+      "label": "Trading",
+      "type": "individual_taxable",
+      "tax_status": "taxable",
+      "category": "personal",
+      "notes": "Active trading account"
+    },
+    "acct_index": {
+      "account_number": "XXXXXXXX",
+      "name": "Example.Index - Managed Index",
+      "label": "Index",
+      "type": "individual_taxable",
+      "tax_status": "taxable",
+      "category": "personal",
+      "notes": "Passive index portfolio"
+    },
+    "acct_ira": {
+      "account_number": "XXXXXXXX",
+      "name": "Example.IRA - Traditional IRA",
+      "label": "IRA",
+      "type": "retirement",
+      "tax_status": "tax_deferred",
+      "category": "retirement",
+      "notes": "Traditional retirement savings"
+    },
+    "acct_roth": {
+      "account_number": "XXXXXXXX",
+      "name": "Example.Roth - Roth IRA",
+      "label": "Roth",
+      "type": "retirement",
+      "tax_status": "tax_free",
+      "category": "retirement",
+      "notes": "Tax-free retirement growth"
+    },
+    "acct_inherited_ira": {
+      "account_number": "XXXXXXXX",
+      "name": "Example.Inherited.IRA.2030",
+      "label": "Inherited IRA",
+      "type": "inherited_ira",
+      "tax_status": "tax_deferred",
+      "category": "inherited",
+      "distribution_deadline": "2030-12-31",
+      "notes": "10-year rule example"
+    },
+    "acct_education": {
+      "account_number": "XXXXXXXX",
+      "name": "Example.ESA - Student",
+      "label": "Education",
+      "type": "education",
+      "tax_status": "tax_free",
+      "category": "education",
+      "beneficiary": "Student",
+      "notes": "Education savings account"
+    },
+    "acct_business": {
+      "account_number": "XXXXXXXX",
+      "name": "Example.Business - Brokerage",
+      "label": "Business",
+      "type": "business",
+      "tax_status": "taxable",
+      "category": "business",
+      "notes": "Business brokerage account"
+    }
+  }
+}
