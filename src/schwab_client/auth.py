@@ -165,6 +165,9 @@ def authenticate_interactive(
     app_secret: str | None = None,
     callback_url: str = "https://127.0.0.1:8001",
     token_path: Path | None = None,
+    interactive: bool = False,
+    requested_browser: str | None = None,
+    callback_timeout: float | None = 300.0,
 ):
     """
     Run interactive authentication flow (opens browser).
@@ -194,6 +197,9 @@ def authenticate_interactive(
         app_secret=app_secret,
         callback_url=callback_url,
         token_path=str(token_path),
+        callback_timeout=callback_timeout,
+        interactive=interactive,
+        requested_browser=requested_browser,
     )
 
     print()
