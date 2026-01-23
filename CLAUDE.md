@@ -48,27 +48,31 @@ response envelope.
 
 ### Commands
 
-- portfolio [-p]
-- positions [--symbol SYMBOL]
-- balance
-- allocation
-- performance
-- vix
-- indices
-- sectors
-- market
-- auth
-- doctor
-- report [--output PATH] [--no-market]
-- accounts
-- buy [ACCOUNT] SYMBOL QTY [--limit PRICE] [--dry-run] [--yes]
-- sell [ACCOUNT] SYMBOL QTY [--limit PRICE] [--dry-run] [--yes]
-- orders [ACCOUNT] [--json|--text]
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `portfolio [-p]` | `p` | Show portfolio summary (with positions) |
+| `positions [--symbol]` | `pos` | Show positions |
+| `balance` | `bal` | Show account balances |
+| `allocation` | `alloc` | Analyze allocation |
+| `performance` | `perf` | Show performance metrics |
+| `vix` | | Show VIX data |
+| `indices` | `idx` | Show market indices |
+| `sectors` | `sec` | Show sector performance |
+| `market` | `mkt` | Show market signals |
+| `movers [--gainers\|--losers]` | `mov` | Show top gainers/losers |
+| `futures` | `fut` | Show pre-market futures |
+| `fundamentals SYMBOL` | `fund` | Show symbol fundamentals |
+| `dividends [--days\|--upcoming]` | `div` | Show dividends |
+| `auth` | | Check authentication |
+| `doctor` | `dr` | Run diagnostics |
+| `accounts` | | List configured accounts |
+| `report [--output PATH]` | | Generate portfolio report |
+| `snapshot` | `snap` | Get complete data snapshot |
+| `buy [ACCOUNT] SYMBOL QTY` | | Buy shares |
+| `sell [ACCOUNT] SYMBOL QTY` | | Sell shares |
+| `orders [ACCOUNT]` | `ord` | Show open orders |
 
 Default account: set `SCHWAB_DEFAULT_ACCOUNT` to omit `ACCOUNT` for buy/sell/orders.
-
-Report output defaults to `~/.schwab-cli-tools/reports` (override with
-`--output` or `SCHWAB_REPORT_DIR`). Use `--no-market` to skip market data.
 
 ### JSON Envelope
 
@@ -100,11 +104,12 @@ scripts, agents, or automation.
 
 Additional safeguards:
 - `--dry-run` previews without placing an order (always allowed).
-- `--yes` skips interactive confirmation (still requires `SCHWAB_ALLOW_LIVE_TRADES`).
+- Live trades require typing "CONFIRM" (cannot be bypassed).
 - `--non-interactive` fails if a prompt would occur.
-- In JSON mode, buy/sell require `--yes` or `--dry-run`.
+- JSON mode cannot execute live trades (use `--dry-run` only).
+- All trade attempts are logged to `~/.schwab-cli-tools/trade_audit.log`.
 
-For clawdbot/automation: Use `--dry-run` for reports. Never set `SCHWAB_ALLOW_LIVE_TRADES`
+For clawdbot/automation: Use `--dry-run` for previews. Never set `SCHWAB_ALLOW_LIVE_TRADES`
 in automated environments unless you have explicit approval workflows.
 
 ### Exit Codes
@@ -113,19 +118,71 @@ in automated environments unless you have explicit approval workflows.
 - `1` user/config error
 - `2` API/HTTP error
 
-## Structure
+## Architecture
 
 ```
-src/core/           # Shared portfolio + market logic
-src/schwab_client/  # Schwab API wrapper + CLI
-config/             # Account config (accounts.json gitignored)
-tokens/             # Auth tokens (gitignored, repo-local when configured)
-private/            # Local notes/snapshots/reports/etc. (gitignored)
+src/schwab_client/
+├── cli/                    # CLI package (modular)
+│   ├── __init__.py         # Entry point, argparse, routing
+│   ├── context.py          # Cached clients, trade logger
+│   ├── output.py           # JSON envelope, formatters
+│   └── commands/           # Command handlers
+│       ├── portfolio.py    # portfolio, positions, balance, allocation
+│       ├── market.py       # vix, indices, sectors, movers, futures
+│       ├── trade.py        # buy, sell, orders (unified execute_trade)
+│       ├── admin.py        # auth, doctor, accounts
+│       └── report.py       # report, snapshot
+├── auth.py                 # Portfolio API authentication
+├── market_auth.py          # Market API authentication
+└── client.py               # SchwabClientWrapper
+
+src/core/                   # Pure business logic (no I/O)
+├── portfolio_service.py    # Portfolio aggregation
+├── market_service.py       # Market data processing
+└── errors.py               # Custom exceptions
+
+config/
+├── accounts.schema.json    # JSON schema for accounts.json
+├── accounts.template.json  # Template (tracked)
+├── accounts.json           # Your config (gitignored)
+└── secure_account_config.py
 ```
+
+### Key Design Patterns
+
+1. **Client Caching**: `context.py` provides lazy singletons for portfolio and market
+   clients. Token I/O happens once per CLI invocation.
+
+2. **Unified Trade Execution**: `trade.py` uses a single `execute_trade()` function
+   for both buy and sell, eliminating duplication.
+
+3. **Command Aliases**: Short aliases (`p`, `dr`, `snap`) defined in `cli/__init__.py`.
+
+4. **Centralized Output**: `output.py` handles JSON envelope, formatters, and error
+   handling consistently across all commands.
+
+## Testing
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run with mock clients (no credentials needed)
+uv run pytest tests/unit/
+
+# Run specific test
+uv run pytest tests/unit/test_cli.py -v
+```
+
+Mock fixtures in `conftest.py`:
+- `mock_schwab_client` - mocked portfolio client
+- `mock_market_client` - mocked market client
+- `reset_cli_context` - reset cached clients between tests
 
 ## Critical Rules
 
 1. Never commit `.env`, `config/accounts.json`, `tokens/`, or anything under `private/`.
-   Repo-local tokens live in `./tokens` when configured; otherwise use `~/.schwab-cli-tools`.
 2. Never hardcode account numbers or API keys.
 3. Use `hashValue` from `get_account_numbers()` for API calls.
+4. Use `get_client()` and `get_cached_market_client()` from `context.py` - never
+   instantiate clients directly in commands.

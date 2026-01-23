@@ -1,38 +1,58 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schwab-cli-tools/accounts.schema.json",
+  "title": "Schwab CLI Account Configuration",
+  "description": "Schema for config/accounts.json - defines account aliases and metadata",
   "type": "object",
-  "required": ["accounts"],
-  "properties": {
-    "accounts": {
-      "type": "object",
-      "additionalProperties": {
-        "$ref": "#/definitions/account"
-      }
-    }
-  },
-  "definitions": {
-    "account": {
-      "type": "object",
-      "required": [
-        "account_number",
-        "name",
-        "label",
-        "type",
-        "tax_status",
-        "category"
-      ],
-      "properties": {
-        "account_number": {"type": "string"},
-        "name": {"type": "string"},
-        "label": {"type": "string"},
-        "type": {"type": "string"},
-        "tax_status": {"type": "string"},
-        "category": {"type": "string"},
-        "notes": {"type": "string"},
-        "distribution_deadline": {"type": ["string", "null"]},
-        "beneficiary": {"type": ["string", "null"]}
+  "additionalProperties": {
+    "type": "object",
+    "required": ["account_number"],
+    "properties": {
+      "account_number": {
+        "type": "string",
+        "pattern": "^[0-9]+$",
+        "description": "Full Schwab account number (digits only)"
       },
-      "additionalProperties": false
-    }
+      "label": {
+        "type": "string",
+        "description": "Friendly display name for the account"
+      },
+      "name": {
+        "type": "string",
+        "description": "Account holder name"
+      },
+      "account_type": {
+        "type": "string",
+        "enum": ["individual", "joint", "ira", "roth_ira", "401k", "trust", "custodial", "other"],
+        "description": "Type of account"
+      },
+      "tax_status": {
+        "type": "string",
+        "enum": ["taxable", "tax_deferred", "tax_free"],
+        "description": "Tax treatment of the account"
+      },
+      "category": {
+        "type": "string",
+        "description": "Custom grouping category"
+      },
+      "description": {
+        "type": "string",
+        "description": "Optional description"
+      },
+      "notes": {
+        "type": "string",
+        "description": "Additional notes"
+      },
+      "distribution_deadline": {
+        "type": "string",
+        "format": "date",
+        "description": "RMD deadline if applicable"
+      },
+      "beneficiary": {
+        "type": "string",
+        "description": "Beneficiary name if applicable"
+      }
+    },
+    "additionalProperties": false
   }
 }

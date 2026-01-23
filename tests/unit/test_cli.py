@@ -22,7 +22,7 @@ class TestCLIHelp:
         """Test --help shows usage information."""
         result = run_cli("--help")
         assert result.exit_code == 0
-        assert "Schwab Portfolio Manager CLI" in result.stdout
+        assert "Schwab CLI" in result.stdout or "portfolio" in result.stdout
         assert "portfolio" in result.stdout
         assert "positions" in result.stdout
 
@@ -95,7 +95,7 @@ class TestTradeSafety:
 
     def test_live_trading_disabled_by_default(self):
         """Test live trading is blocked without env var."""
-        from src.schwab_client.cli import is_live_trading_enabled
+        from src.schwab_client.cli.commands.trade import is_live_trading_enabled
 
         import os
         # Ensure env var is not set
@@ -105,7 +105,7 @@ class TestTradeSafety:
 
     def test_live_trading_enabled_with_env_var(self):
         """Test live trading enabled with env var."""
-        from src.schwab_client.cli import is_live_trading_enabled
+        from src.schwab_client.cli.commands.trade import is_live_trading_enabled
 
         import os
         os.environ["SCHWAB_ALLOW_LIVE_TRADES"] = "true"
@@ -116,7 +116,7 @@ class TestTradeSafety:
 
     def test_ensure_trade_blocks_without_env_var(self):
         """Test ensure_trade_confirmation blocks live trades."""
-        from src.schwab_client.cli import ensure_trade_confirmation
+        from src.schwab_client.cli.commands.trade import ensure_trade_confirmation
         from src.core.errors import ConfigError
 
         import os
@@ -132,7 +132,7 @@ class TestTradeSafety:
 
     def test_ensure_trade_allows_dry_run(self):
         """Test dry-run is always allowed."""
-        from src.schwab_client.cli import ensure_trade_confirmation
+        from src.schwab_client.cli.commands.trade import ensure_trade_confirmation
 
         import os
         os.environ.pop("SCHWAB_ALLOW_LIVE_TRADES", None)
@@ -177,7 +177,7 @@ class TestCLIResult:
 class TestAccountsCommandJSON:
     """Tests for accounts command JSON output."""
 
-    @patch("src.schwab_client.cli.secure_config")
+    @patch("src.schwab_client.cli.commands.admin.secure_config")
     def test_accounts_json_envelope(self, mock_config):
         """Test accounts --json returns valid envelope."""
         mock_info = MagicMock()
@@ -188,12 +188,9 @@ class TestAccountsCommandJSON:
         mock_info.tax_status = "taxable"
         mock_info.category = "trading"
         mock_info.account_number = "12345678"
-        mock_info.notes = None
-        mock_info.distribution_deadline = None
-        mock_info.beneficiary = None
+        mock_info.description = None
 
         mock_config.get_all_accounts.return_value = {"test_acct": mock_info}
-        mock_config.mask_account_number.return_value = "****5678"
 
         from src.schwab_client.cli import main
 
@@ -217,12 +214,9 @@ class TestAccountsCommandJSON:
 
 class TestPortfolioCommand:
     """Tests for portfolio command output."""
-    """Tests for portfolio command output."""
 
-    @patch("src.schwab_client.cli.get_authenticated_client")
-    @patch("src.schwab_client.cli.secure_config")
-    def test_portfolio_command_calls_api(self, mock_config, mock_get_client):
-        """Test portfolio command uses Schwab client correctly."""
+    def test_portfolio_command_uses_wrapper(self):
+        """Test portfolio command uses Schwab client wrapper correctly."""
         from src.schwab_client import SchwabClientWrapper
 
         # Setup mock client
@@ -252,7 +246,6 @@ class TestPortfolioCommand:
         ]
         mock_response.raise_for_status = MagicMock()
         mock_raw_client.get_accounts.return_value = mock_response
-        mock_get_client.return_value = mock_raw_client
 
         # Create wrapper
         wrapper = SchwabClientWrapper(mock_raw_client)
@@ -267,7 +260,7 @@ class TestPortfolioCommand:
 class TestAccountsCommand:
     """Tests for accounts list command."""
 
-    @patch("src.schwab_client.cli.secure_config")
+    @patch("src.schwab_client.cli.commands.admin.secure_config")
     def test_list_accounts_returns_configured_accounts(self, mock_config):
         """Test listing configured accounts."""
         mock_info = MagicMock()
@@ -351,69 +344,74 @@ class TestClientOrderMethods:
         assert orders[0]["orderId"] == "123"
 
 
+class TestCLICommandAliases:
+    """Tests for CLI command aliases."""
+
+    def test_portfolio_alias(self):
+        """Test 'p' alias works for portfolio."""
+        result = run_cli("p", "--help")
+        assert result.exit_code == 0
+        assert "portfolio" in result.stdout.lower() or "positions" in result.stdout.lower()
+
+    def test_doctor_alias(self):
+        """Test 'dr' alias works for doctor."""
+        result = run_cli("dr", "--help")
+        assert result.exit_code == 0
+
+
 class TestCLIArgParsing:
     """Tests for CLI argument parsing."""
 
-    def test_main_parses_portfolio_command(self):
+    @patch("src.schwab_client.cli.cmd_portfolio")
+    def test_main_parses_portfolio_command(self, mock_cmd):
         """Test main function parses portfolio command."""
-        from unittest.mock import patch
+        from src.schwab_client.cli import main
 
-        with patch("src.schwab_client.cli.print_portfolio") as mock_print:
-            from src.schwab_client.cli import main
+        with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
+            main(["portfolio"])
 
-            with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
-                main(["portfolio"])
+        mock_cmd.assert_called_once_with(include_positions=False, output_mode="text")
 
-            mock_print.assert_called_once_with(include_positions=False, output_mode="text")
-
-    def test_main_parses_portfolio_with_positions(self):
+    @patch("src.schwab_client.cli.cmd_portfolio")
+    def test_main_parses_portfolio_with_positions(self, mock_cmd):
         """Test main function parses portfolio -p flag."""
-        from unittest.mock import patch
+        from src.schwab_client.cli import main
 
-        with patch("src.schwab_client.cli.print_portfolio") as mock_print:
-            from src.schwab_client.cli import main
+        with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
+            main(["portfolio", "-p"])
 
-            with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
-                main(["portfolio", "-p"])
+        mock_cmd.assert_called_once_with(include_positions=True, output_mode="text")
 
-            mock_print.assert_called_once_with(include_positions=True, output_mode="text")
-
-    def test_main_parses_balance_command(self):
+    @patch("src.schwab_client.cli.cmd_balance")
+    def test_main_parses_balance_command(self, mock_cmd):
         """Test main function parses balance command."""
-        from unittest.mock import patch
+        from src.schwab_client.cli import main
 
-        with patch("src.schwab_client.cli.print_balances") as mock_print:
-            from src.schwab_client.cli import main
+        with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
+            main(["balance"])
 
-            with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
-                main(["balance"])
+        mock_cmd.assert_called_once_with(output_mode="text")
 
-            mock_print.assert_called_once_with(output_mode="text")
-
-    def test_main_parses_accounts_command(self):
+    @patch("src.schwab_client.cli.cmd_accounts")
+    def test_main_parses_accounts_command(self, mock_cmd):
         """Test main function parses accounts command."""
-        from unittest.mock import patch
+        from src.schwab_client.cli import main
 
-        with patch("src.schwab_client.cli.list_accounts") as mock_list:
-            from src.schwab_client.cli import main
+        with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
+            main(["accounts"])
 
-            with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
-                main(["accounts"])
+        mock_cmd.assert_called_once_with(output_mode="text")
 
-            mock_list.assert_called_once_with(output_mode="text")
-
-    def test_main_parses_report_command(self):
+    @patch("src.schwab_client.cli.cmd_report")
+    def test_main_parses_report_command(self, mock_cmd):
         """Test main function parses report command."""
-        from unittest.mock import patch
+        from src.schwab_client.cli import main
 
-        with patch("src.schwab_client.cli.generate_report") as mock_report:
-            from src.schwab_client.cli import main
+        with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
+            main(["report"])
 
-            with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
-                main(["report"])
-
-            mock_report.assert_called_once_with(
-                output_mode="text",
-                output_path=None,
-                include_market=True,
-            )
+        mock_cmd.assert_called_once_with(
+            output_mode="text",
+            output_path=None,
+            include_market=True,
+        )

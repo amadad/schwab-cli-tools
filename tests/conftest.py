@@ -252,3 +252,155 @@ def temp_tokens_dir(tmp_path):
     tokens_dir = tmp_path / "tokens"
     tokens_dir.mkdir()
     return tokens_dir
+
+
+# =============================================================================
+# Mock Client Fixtures
+# =============================================================================
+
+@pytest.fixture
+def mock_portfolio_summary():
+    """Sample portfolio summary data."""
+    return {
+        "total_value": 172500.00,
+        "total_cash": 10000.00,
+        "total_invested": 162500.00,
+        "cash_percentage": 5.8,
+        "account_count": 2,
+        "position_count": 3,
+        "positions": [
+            {
+                "symbol": "AAPL",
+                "quantity": 100,
+                "market_value": 17500.00,
+                "day_gain_percent": 1.5,
+                "account_name": "Trading",
+            },
+            {
+                "symbol": "GOOGL",
+                "quantity": 50,
+                "market_value": 145000.00,
+                "day_gain_percent": -0.3,
+                "account_name": "Trading",
+            },
+        ],
+    }
+
+
+@pytest.fixture
+def mock_market_signals():
+    """Sample market signals data."""
+    return {
+        "signals": {
+            "vix": {"value": 15.5, "signal": "low_volatility"},
+            "market_sentiment": "bullish",
+            "sector_rotation": "defensive_to_cyclical",
+        },
+        "overall": "bullish",
+        "recommendation": "favorable for equities",
+    }
+
+
+@pytest.fixture
+def mock_vix_data():
+    """Sample VIX data."""
+    return {
+        "vix": 15.5,
+        "change": -0.5,
+        "change_pct": -3.1,
+        "signal": "low_volatility",
+        "interpretation": "Market calm, low fear",
+    }
+
+
+@pytest.fixture
+def mock_schwab_client(mocker, mock_portfolio_summary, mock_market_signals):
+    """Mock SchwabClientWrapper for unit tests.
+
+    Usage:
+        def test_portfolio(mock_schwab_client):
+            # Client is already patched into context
+            from src.schwab_client.cli import main
+            main(["portfolio", "--json"])
+    """
+    from src.schwab_client.client import SchwabClientWrapper
+
+    mock_client = mocker.Mock(spec=SchwabClientWrapper)
+    mock_client.get_portfolio_summary.return_value = mock_portfolio_summary
+    mock_client.get_positions.return_value = mock_portfolio_summary["positions"]
+    mock_client.get_account_balances.return_value = [
+        {"account_name": "Trading", "total_value": 172500.00, "cash_balance": 10000.00}
+    ]
+    mock_client.analyze_allocation.return_value = {
+        "by_asset_class": {"equities": {"percentage": 94.2, "value": 162500}},
+        "top_holdings": [{"symbol": "GOOGL", "percentage": 84.0, "value": 145000}],
+        "concentration_warnings": ["GOOGL exceeds 10% concentration"],
+    }
+    mock_client.get_portfolio_performance.return_value = {
+        "total_value": 172500.00,
+        "day_change": 1250.00,
+        "day_change_percent": 0.73,
+        "top_gainers": [{"symbol": "AAPL", "day_gain_percent": 1.5}],
+        "top_losers": [{"symbol": "GOOGL", "day_gain_percent": -0.3}],
+    }
+    mock_client.get_all_accounts_full.return_value = []
+    mock_client.raw_client = mocker.Mock()
+
+    # Patch the context module to return our mock
+    mocker.patch(
+        "src.schwab_client.cli.context.get_client",
+        return_value=mock_client,
+    )
+
+    return mock_client
+
+
+@pytest.fixture
+def mock_market_client(mocker, mock_vix_data, mock_market_signals):
+    """Mock market client for unit tests."""
+    mock_client = mocker.Mock()
+
+    # Patch context module
+    mocker.patch(
+        "src.schwab_client.cli.context.get_cached_market_client",
+        return_value=mock_client,
+    )
+
+    # Also patch the service functions
+    mocker.patch(
+        "src.schwab_client.cli.commands.market.get_vix",
+        return_value=mock_vix_data,
+    )
+    mocker.patch(
+        "src.schwab_client.cli.commands.market.get_market_signals",
+        return_value=mock_market_signals,
+    )
+    mocker.patch(
+        "src.schwab_client.cli.commands.market.get_market_indices",
+        return_value={
+            "indices": {
+                "$SPX": {"name": "S&P 500", "price": 5000.00, "change_pct": 0.5},
+            },
+            "sentiment": "bullish",
+        },
+    )
+    mocker.patch(
+        "src.schwab_client.cli.commands.market.get_sector_performance",
+        return_value={
+            "sectors": [{"symbol": "XLK", "sector": "Technology", "change_pct": 1.2}],
+            "rotation": "risk_on",
+            "leaders": ["XLK"],
+            "laggards": ["XLU"],
+        },
+    )
+
+    return mock_client
+
+
+@pytest.fixture
+def reset_cli_context():
+    """Reset cached clients between tests."""
+    from src.schwab_client.cli.context import reset_clients
+
+    yield
+    reset_clients()
