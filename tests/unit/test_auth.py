@@ -76,6 +76,99 @@ class TestTokenManager:
         manager.delete_tokens()
 
 
+class TestTokenExpiration:
+    """Tests for token expiration warnings."""
+
+    def test_token_info_includes_hours_remaining(self, tmp_path):
+        """Test token info includes hours remaining."""
+        from datetime import datetime, timedelta
+
+        # Create a token that expires in 2 days
+        token_path = tmp_path / "test_token.json"
+        created = datetime.now() - timedelta(days=5)  # 5 days old, 2 days left
+        token_data = {
+            "access_token": "test",
+            "creation_timestamp": created.isoformat(),
+        }
+        token_path.write_text(json.dumps(token_data))
+
+        manager = TokenManager(token_path=token_path)
+        info = manager.get_token_info()
+
+        assert info["exists"] is True
+        assert info["valid"] is True
+        assert "expires_in_hours" in info
+        assert info["expires_in_hours"] > 0
+        assert info["expires_in_hours"] < 72  # Less than 3 days
+
+    def test_token_critical_warning_under_24h(self, tmp_path):
+        """Test critical warning when token expires in < 24 hours."""
+        from datetime import datetime, timedelta
+
+        # Create a token that expires in 12 hours
+        token_path = tmp_path / "test_token.json"
+        created = datetime.now() - timedelta(days=7) + timedelta(hours=12)
+        token_data = {
+            "access_token": "test",
+            "creation_timestamp": created.isoformat(),
+        }
+        token_path.write_text(json.dumps(token_data))
+
+        manager = TokenManager(token_path=token_path)
+        info = manager.get_token_info()
+
+        assert info["warning_level"] == "critical"
+        assert "hours" in info["warning"].lower()
+
+    def test_token_warning_under_48h(self, tmp_path):
+        """Test warning when token expires in 24-48 hours."""
+        from datetime import datetime, timedelta
+
+        # Create a token that expires in 36 hours
+        token_path = tmp_path / "test_token.json"
+        created = datetime.now() - timedelta(days=7) + timedelta(hours=36)
+        token_data = {
+            "access_token": "test",
+            "creation_timestamp": created.isoformat(),
+        }
+        token_path.write_text(json.dumps(token_data))
+
+        manager = TokenManager(token_path=token_path)
+        info = manager.get_token_info()
+
+        assert info["warning_level"] == "warning"
+
+    def test_expired_token_detected(self, tmp_path):
+        """Test expired token is detected."""
+        from datetime import datetime, timedelta
+
+        # Create an expired token (8 days old)
+        token_path = tmp_path / "test_token.json"
+        created = datetime.now() - timedelta(days=8)
+        token_data = {
+            "access_token": "test",
+            "creation_timestamp": created.isoformat(),
+        }
+        token_path.write_text(json.dumps(token_data))
+
+        manager = TokenManager(token_path=token_path)
+        info = manager.get_token_info()
+
+        assert info["valid"] is False
+        assert info["warning_level"] == "critical"
+        assert "expired" in info["warning"].lower()
+
+    def test_missing_token_warning(self, tmp_path):
+        """Test missing token gives critical warning."""
+        token_path = tmp_path / "nonexistent.json"
+        manager = TokenManager(token_path=token_path)
+        info = manager.get_token_info()
+
+        assert info["exists"] is False
+        assert info["valid"] is False
+        assert info["warning_level"] == "critical"
+
+
 class TestGetAuthenticatedClient:
     """Tests for get_authenticated_client"""
 

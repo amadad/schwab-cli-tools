@@ -22,13 +22,75 @@ Usage:
 
 import argparse
 import json
+import logging
 import os
 import sys
 from datetime import datetime
+from importlib.metadata import version as get_version
 from pathlib import Path
 from typing import Any
 
 import httpx
+
+# Trade audit logging
+TRADE_AUDIT_LOG = Path(os.getenv("SCHWAB_TRADE_AUDIT_LOG", "")).expanduser() if os.getenv("SCHWAB_TRADE_AUDIT_LOG") else None
+_trade_logger: logging.Logger | None = None
+
+
+def _get_trade_logger() -> logging.Logger | None:
+    """Get or create the trade audit logger."""
+    global _trade_logger
+    if _trade_logger is not None:
+        return _trade_logger
+
+    # Default to ~/.schwab-cli-tools/trade_audit.log if not set
+    log_path = TRADE_AUDIT_LOG
+    if log_path is None:
+        from .auth import resolve_data_dir
+        log_path = resolve_data_dir() / "trade_audit.log"
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    _trade_logger = logging.getLogger("schwab.trade_audit")
+    _trade_logger.setLevel(logging.INFO)
+
+    # Avoid duplicate handlers
+    if not _trade_logger.handlers:
+        handler = logging.FileHandler(log_path)
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s | %(levelname)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"
+        ))
+        _trade_logger.addHandler(handler)
+
+    return _trade_logger
+
+
+def log_trade_attempt(
+    *,
+    action: str,
+    symbol: str,
+    quantity: int,
+    account_alias: str,
+    limit_price: float | None = None,
+    dry_run: bool = False,
+    executed: bool = False,
+    cancelled: bool = False,
+    error: str | None = None,
+) -> None:
+    """Log all trade attempts for audit purposes."""
+    logger = _get_trade_logger()
+    if logger is None:
+        return
+
+    order_type = f"LIMIT@{limit_price}" if limit_price else "MARKET"
+    status = "DRY_RUN" if dry_run else ("EXECUTED" if executed else ("CANCELLED" if cancelled else ("ERROR: " + (error or "unknown") if error else "ATTEMPTED")))
+
+    logger.info(
+        f"{action} | {symbol} | {quantity} | {order_type} | {account_alias} | {status}"
+    )
+
+__version__ = get_version("schwab-cli-tools")
 
 from config.secure_account_config import ACCOUNTS_FILE, secure_config
 from src.core.errors import ConfigError, PortfolioError
@@ -53,6 +115,7 @@ SCHEMA_VERSION = 1
 OUTPUT_ENV_VAR = "SCHWAB_OUTPUT"
 DEFAULT_ACCOUNT_ENV_VAR = "SCHWAB_DEFAULT_ACCOUNT"
 REPORT_DIR_ENV_VAR = "SCHWAB_REPORT_DIR"
+LIVE_TRADES_ENV_VAR = "SCHWAB_ALLOW_LIVE_TRADES"
 
 
 def build_response(
@@ -196,14 +259,105 @@ def parse_orders_account(args: list[str]) -> str:
     return resolve_account_alias(account)
 
 
+def is_live_trading_enabled() -> bool:
+    """Check if live trading is explicitly enabled via environment variable.
+
+    Live trades are BLOCKED by default. To enable:
+        export SCHWAB_ALLOW_LIVE_TRADES=true
+
+    This is a safety measure to prevent accidental trades.
+    """
+    value = os.getenv(LIVE_TRADES_ENV_VAR, "").strip().lower()
+    return value in ("true", "1", "yes")
+
+
+def is_interactive_tty() -> bool:
+    """Check if we're running in an interactive terminal."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 def ensure_trade_confirmation(
     *, output_mode: str, auto_confirm: bool, dry_run: bool, non_interactive: bool
 ) -> None:
-    """Enforce confirmation rules for trade commands."""
-    if output_mode == "json" and not (auto_confirm or dry_run):
-        raise ConfigError("JSON output requires --yes or --dry-run for trade commands.")
-    if non_interactive and not (auto_confirm or dry_run):
-        raise ConfigError("Non-interactive mode requires --yes or --dry-run for trade commands.")
+    """Enforce confirmation rules for trade commands.
+
+    SAFETY RULES (in order of precedence):
+    1. --dry-run is ALWAYS allowed (preview mode)
+    2. Live trades require SCHWAB_ALLOW_LIVE_TRADES=true
+    3. Live trades require interactive TTY (blocks automation)
+    4. Live trades ALWAYS require typing "CONFIRM" (--yes does NOT bypass this)
+    5. JSON mode can only do --dry-run (cannot confirm interactively)
+
+    This ensures NO automated system can execute live trades without human intervention.
+    """
+    # Dry run is always safe
+    if dry_run:
+        return
+
+    # CRITICAL: Block all live trades unless explicitly enabled
+    if not is_live_trading_enabled():
+        raise ConfigError(
+            f"Live trading is disabled. Set {LIVE_TRADES_ENV_VAR}=true to enable, "
+            "or use --dry-run to preview orders."
+        )
+
+    # CRITICAL: Block live trades in non-interactive environments
+    if not is_interactive_tty():
+        raise ConfigError(
+            "Live trades require an interactive terminal. "
+            "Automated/scripted trading is not allowed. Use --dry-run for previews."
+        )
+
+    # CRITICAL: JSON mode cannot confirm interactively, so block live trades
+    if output_mode == "json":
+        raise ConfigError(
+            "JSON output mode cannot execute live trades (no interactive confirmation). "
+            "Use --dry-run to preview orders in JSON format."
+        )
+
+    # Non-interactive flag explicitly requested
+    if non_interactive:
+        raise ConfigError(
+            "Non-interactive mode cannot execute live trades. "
+            "Use --dry-run to preview orders."
+        )
+
+
+def require_trade_confirmation(
+    *,
+    action: str,
+    symbol: str,
+    quantity: int,
+    account_label: str,
+    limit_price: float | None = None,
+) -> bool:
+    """Require user to type CONFIRM for live trades. Returns True if confirmed.
+
+    CRITICAL: This is the ONLY way to confirm a live trade.
+    --yes flag does NOT bypass this. User must type "CONFIRM" exactly.
+    """
+    print(f"\n{'=' * 60}")
+    print("⚠️  LIVE TRADE CONFIRMATION REQUIRED")
+    print(f"{'=' * 60}")
+    print(f"Action:   {action}")
+    print(f"Symbol:   {symbol}")
+    print(f"Quantity: {quantity} shares")
+    if limit_price:
+        print(f"Type:     LIMIT @ ${limit_price:.2f}")
+    else:
+        print("Type:     MARKET")
+    print(f"Account:  {account_label}")
+    print(f"{'=' * 60}")
+    print("\n⚠️  This will execute a REAL trade with REAL money.")
+    print("Type CONFIRM to proceed, or anything else to cancel: ", end="")
+
+    try:
+        response = input().strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled.")
+        return False
+
+    return response == "CONFIRM"
 
 
 def handle_cli_error(error: Exception, *, output_mode: str, command: str) -> None:
@@ -390,14 +544,26 @@ def show_doctor(*, output_mode: str) -> None:
         if not portfolio_token.get("exists", False):
             warnings.append("portfolio_token_missing")
         if portfolio_token.get("exists") and not portfolio_token.get("valid", False):
-            warnings.append("portfolio_token_invalid")
+            warnings.append("portfolio_token_expired")
+
+        # Add token expiration warnings
+        if portfolio_token.get("warning_level") == "critical":
+            warnings.append("portfolio_token_expiring_critical")
+        elif portfolio_token.get("warning_level") == "warning":
+            warnings.append("portfolio_token_expiring_soon")
 
         if not (market_creds["app_key"] and market_creds["app_secret"]):
             warnings.append("market_credentials_missing")
         if not market_token.get("exists", False):
             warnings.append("market_token_missing")
         if market_token.get("exists") and not market_token.get("valid", False):
-            warnings.append("market_token_invalid")
+            warnings.append("market_token_expired")
+
+        # Add market token expiration warnings
+        if market_token.get("warning_level") == "critical":
+            warnings.append("market_token_expiring_critical")
+        elif market_token.get("warning_level") == "warning":
+            warnings.append("market_token_expiring_soon")
 
         if not accounts_configured:
             warnings.append("accounts_config_missing")
@@ -436,22 +602,38 @@ def show_doctor(*, output_mode: str) -> None:
         )
         print(
             f"  Token: {'present' if portfolio_token.get('exists') else 'missing'}"
-            f" ({'valid' if portfolio_token.get('valid') else 'invalid'})"
+            f" ({'valid' if portfolio_token.get('valid') else 'EXPIRED'})"
         )
-        expires_at = portfolio_token.get("expires") or portfolio_token.get("expires_at")
-        if expires_at:
-            print(f"  Expires: {expires_at}")
+        if portfolio_token.get("expires_in_hours") is not None:
+            hours = portfolio_token["expires_in_hours"]
+            days = portfolio_token.get("expires_in_days", 0)
+            if hours <= 0:
+                print("  Expires: EXPIRED")
+            elif hours < 24:
+                print(f"  Expires: {hours:.1f} hours remaining")
+            else:
+                print(f"  Expires: {days} days ({hours:.0f} hours)")
+        if portfolio_token.get("warning"):
+            print(f"  WARNING: {portfolio_token['warning']}")
         print(f"  Token path: {portfolio_token_path}")
 
         print("\nMarket API:")
         print(f"  Credentials: {'OK' if data['market']['credentials_present'] else 'MISSING'}")
         print(
             f"  Token: {'present' if market_token.get('exists') else 'missing'}"
-            f" ({'valid' if market_token.get('valid') else 'invalid'})"
+            f" ({'valid' if market_token.get('valid') else 'EXPIRED'})"
         )
-        expires_at = market_token.get("expires") or market_token.get("expires_at")
-        if expires_at:
-            print(f"  Expires: {expires_at}")
+        if market_token.get("expires_in_hours") is not None:
+            hours = market_token["expires_in_hours"]
+            days = market_token.get("expires_in_days", 0)
+            if hours <= 0:
+                print("  Expires: EXPIRED")
+            elif hours < 24:
+                print(f"  Expires: {hours:.1f} hours remaining")
+            else:
+                print(f"  Expires: {days} days ({hours:.0f} hours)")
+        if market_token.get("warning"):
+            print(f"  WARNING: {market_token['warning']}")
         print(f"  Token path: {market_token_path}")
 
         print("\nAccounts:")
@@ -834,7 +1016,7 @@ def execute_buy(
     auto_confirm: bool,
     non_interactive: bool,
 ) -> None:
-    """Execute a buy order with confirmation."""
+    """Execute a buy order with mandatory confirmation for live trades."""
     command = "buy"
     try:
         account, symbol, quantity = parse_trade_args(args, command)
@@ -847,33 +1029,53 @@ def execute_buy(
                 f"Unknown account alias '{account}'. Use 'schwab accounts' to see available aliases."
             )
 
+        # Always generate preview first
         if limit_price:
             preview = client.buy_limit(account, symbol, quantity, limit_price, dry_run=True)
         else:
             preview = client.buy_market(account, symbol, quantity, dry_run=True)
 
-        if output_mode == "json":
-            ensure_trade_confirmation(
-                output_mode=output_mode,
-                auto_confirm=auto_confirm,
-                dry_run=dry_run,
-                non_interactive=non_interactive,
-            )
-            if dry_run:
-                print_json_response(command, data={"preview": preview, "submitted": False})
-                return
+        account_label = f"{preview['account']} ({preview['account_number_masked']})"
 
-            if limit_price:
-                result = client.buy_limit(account, symbol, quantity, limit_price)
+        # Log the trade attempt
+        log_trade_attempt(
+            action="BUY",
+            symbol=symbol,
+            quantity=quantity,
+            account_alias=account,
+            limit_price=limit_price,
+            dry_run=dry_run,
+        )
+
+        # Handle dry run (always allowed)
+        if dry_run:
+            if output_mode == "json":
+                print_json_response(command, data={"preview": preview, "submitted": False, "dry_run": True})
             else:
-                result = client.buy_market(account, symbol, quantity)
-
-            if not result.get("success"):
-                raise PortfolioError(f"Order failed: {result.get('error')}")
-
-            print_json_response(command, data={"preview": preview, "result": result})
+                print(f"\n{'=' * 60}")
+                print("ORDER PREVIEW (DRY RUN)")
+                print(f"{'=' * 60}")
+                print("Action:   BUY")
+                print(f"Symbol:   {preview['symbol']}")
+                print(f"Quantity: {preview['quantity']} shares")
+                if limit_price:
+                    print(f"Type:     LIMIT @ ${limit_price:.2f}")
+                else:
+                    print("Type:     MARKET")
+                print(f"Account:  {account_label}")
+                print("\n[DRY RUN - Order not submitted]")
+                print()
             return
 
+        # Enforce all safety rules for live trades
+        ensure_trade_confirmation(
+            output_mode=output_mode,
+            auto_confirm=auto_confirm,
+            dry_run=dry_run,
+            non_interactive=non_interactive,
+        )
+
+        # Show preview in text mode
         print(f"\n{'=' * 60}")
         print("ORDER PREVIEW")
         print(f"{'=' * 60}")
@@ -884,37 +1086,58 @@ def execute_buy(
             print(f"Type:     LIMIT @ ${limit_price:.2f}")
         else:
             print("Type:     MARKET")
-        print(f"Account:  {preview['account']} ({preview['account_number_masked']})")
+        print(f"Account:  {account_label}")
 
-        if dry_run:
-            print("\n[DRY RUN - Order not submitted]")
-            print()
-            return
-
-        ensure_trade_confirmation(
-            output_mode=output_mode,
-            auto_confirm=auto_confirm,
-            dry_run=dry_run,
-            non_interactive=non_interactive,
+        # CRITICAL: Require typing "CONFIRM" for live trades
+        # --yes flag does NOT bypass this
+        confirmed = require_trade_confirmation(
+            action="BUY",
+            symbol=symbol,
+            quantity=quantity,
+            account_label=account_label,
+            limit_price=limit_price,
         )
 
-        if not auto_confirm:
-            print(f"\n{'=' * 60}")
-            confirm = input("Execute this order? [y/N]: ").strip().lower()
-            if confirm != "y":
-                print("Order cancelled.")
-                return
+        if not confirmed:
+            log_trade_attempt(
+                action="BUY",
+                symbol=symbol,
+                quantity=quantity,
+                account_alias=account,
+                limit_price=limit_price,
+                cancelled=True,
+            )
+            print("Order cancelled.")
+            return
 
+        # Execute the trade
         if limit_price:
             result = client.buy_limit(account, symbol, quantity, limit_price)
         else:
             result = client.buy_market(account, symbol, quantity)
 
         if result.get("success"):
-            print("\nOrder submitted successfully!")
+            log_trade_attempt(
+                action="BUY",
+                symbol=symbol,
+                quantity=quantity,
+                account_alias=account,
+                limit_price=limit_price,
+                executed=True,
+            )
+            print("\n✅ Order submitted successfully!")
             print(f"Order ID: {result.get('order_id')}")
         else:
-            raise PortfolioError(f"Order failed: {result.get('error')}")
+            error_msg = result.get('error', 'Unknown error')
+            log_trade_attempt(
+                action="BUY",
+                symbol=symbol,
+                quantity=quantity,
+                account_alias=account,
+                limit_price=limit_price,
+                error=error_msg,
+            )
+            raise PortfolioError(f"Order failed: {error_msg}")
 
         print()
 
@@ -931,7 +1154,7 @@ def execute_sell(
     auto_confirm: bool,
     non_interactive: bool,
 ) -> None:
-    """Execute a sell order with confirmation."""
+    """Execute a sell order with mandatory confirmation for live trades."""
     command = "sell"
     try:
         account, symbol, quantity = parse_trade_args(args, command)
@@ -944,33 +1167,53 @@ def execute_sell(
                 f"Unknown account alias '{account}'. Use 'schwab accounts' to see available aliases."
             )
 
+        # Always generate preview first
         if limit_price:
             preview = client.sell_limit(account, symbol, quantity, limit_price, dry_run=True)
         else:
             preview = client.sell_market(account, symbol, quantity, dry_run=True)
 
-        if output_mode == "json":
-            ensure_trade_confirmation(
-                output_mode=output_mode,
-                auto_confirm=auto_confirm,
-                dry_run=dry_run,
-                non_interactive=non_interactive,
-            )
-            if dry_run:
-                print_json_response(command, data={"preview": preview, "submitted": False})
-                return
+        account_label = f"{preview['account']} ({preview['account_number_masked']})"
 
-            if limit_price:
-                result = client.sell_limit(account, symbol, quantity, limit_price)
+        # Log the trade attempt
+        log_trade_attempt(
+            action="SELL",
+            symbol=symbol,
+            quantity=quantity,
+            account_alias=account,
+            limit_price=limit_price,
+            dry_run=dry_run,
+        )
+
+        # Handle dry run (always allowed)
+        if dry_run:
+            if output_mode == "json":
+                print_json_response(command, data={"preview": preview, "submitted": False, "dry_run": True})
             else:
-                result = client.sell_market(account, symbol, quantity)
-
-            if not result.get("success"):
-                raise PortfolioError(f"Order failed: {result.get('error')}")
-
-            print_json_response(command, data={"preview": preview, "result": result})
+                print(f"\n{'=' * 60}")
+                print("ORDER PREVIEW (DRY RUN)")
+                print(f"{'=' * 60}")
+                print("Action:   SELL")
+                print(f"Symbol:   {preview['symbol']}")
+                print(f"Quantity: {preview['quantity']} shares")
+                if limit_price:
+                    print(f"Type:     LIMIT @ ${limit_price:.2f}")
+                else:
+                    print("Type:     MARKET")
+                print(f"Account:  {account_label}")
+                print("\n[DRY RUN - Order not submitted]")
+                print()
             return
 
+        # Enforce all safety rules for live trades
+        ensure_trade_confirmation(
+            output_mode=output_mode,
+            auto_confirm=auto_confirm,
+            dry_run=dry_run,
+            non_interactive=non_interactive,
+        )
+
+        # Show preview in text mode
         print(f"\n{'=' * 60}")
         print("ORDER PREVIEW")
         print(f"{'=' * 60}")
@@ -981,37 +1224,58 @@ def execute_sell(
             print(f"Type:     LIMIT @ ${limit_price:.2f}")
         else:
             print("Type:     MARKET")
-        print(f"Account:  {preview['account']} ({preview['account_number_masked']})")
+        print(f"Account:  {account_label}")
 
-        if dry_run:
-            print("\n[DRY RUN - Order not submitted]")
-            print()
-            return
-
-        ensure_trade_confirmation(
-            output_mode=output_mode,
-            auto_confirm=auto_confirm,
-            dry_run=dry_run,
-            non_interactive=non_interactive,
+        # CRITICAL: Require typing "CONFIRM" for live trades
+        # --yes flag does NOT bypass this
+        confirmed = require_trade_confirmation(
+            action="SELL",
+            symbol=symbol,
+            quantity=quantity,
+            account_label=account_label,
+            limit_price=limit_price,
         )
 
-        if not auto_confirm:
-            print(f"\n{'=' * 60}")
-            confirm = input("Execute this order? [y/N]: ").strip().lower()
-            if confirm != "y":
-                print("Order cancelled.")
-                return
+        if not confirmed:
+            log_trade_attempt(
+                action="SELL",
+                symbol=symbol,
+                quantity=quantity,
+                account_alias=account,
+                limit_price=limit_price,
+                cancelled=True,
+            )
+            print("Order cancelled.")
+            return
 
+        # Execute the trade
         if limit_price:
             result = client.sell_limit(account, symbol, quantity, limit_price)
         else:
             result = client.sell_market(account, symbol, quantity)
 
         if result.get("success"):
-            print("\nOrder submitted successfully!")
+            log_trade_attempt(
+                action="SELL",
+                symbol=symbol,
+                quantity=quantity,
+                account_alias=account,
+                limit_price=limit_price,
+                executed=True,
+            )
+            print("\n✅ Order submitted successfully!")
             print(f"Order ID: {result.get('order_id')}")
         else:
-            raise PortfolioError(f"Order failed: {result.get('error')}")
+            error_msg = result.get('error', 'Unknown error')
+            log_trade_attempt(
+                action="SELL",
+                symbol=symbol,
+                quantity=quantity,
+                account_alias=account,
+                limit_price=limit_price,
+                error=error_msg,
+            )
+            raise PortfolioError(f"Order failed: {error_msg}")
 
         print()
 
@@ -1080,6 +1344,352 @@ def show_orders(args: list[str], *, output_mode: str) -> None:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
+
+def show_movers(output_mode: str = "text", gainers_only: bool = False, losers_only: bool = False, count: int = 5) -> None:
+    """Show top market movers (gainers/losers)."""
+    from schwab.client.base import BaseClient
+    from config.secure_account_config import secure_config
+    
+    client = resolve_market_client()
+    Movers = BaseClient.Movers
+    
+    resp_g = client.get_movers(Movers.Index.SPX, sort_order=Movers.SortOrder.PERCENT_CHANGE_UP, frequency=Movers.Frequency.ONE)
+    gainers_data = resp_g.json() if hasattr(resp_g, 'json') else resp_g
+    gainers_list = gainers_data.get("screeners", []) if isinstance(gainers_data, dict) else (gainers_data or [])
+    
+    resp_l = client.get_movers(Movers.Index.SPX, sort_order=Movers.SortOrder.PERCENT_CHANGE_DOWN, frequency=Movers.Frequency.ONE)
+    losers_data = resp_l.json() if hasattr(resp_l, 'json') else resp_l
+    losers_list = losers_data.get("screeners", []) if isinstance(losers_data, dict) else (losers_data or [])
+    
+    # Filter to only include actual gainers/losers (API returns mixed)
+    true_gainers = [g for g in gainers_list if g.get("netPercentChange", 0) > 0]
+    true_losers = [l for l in losers_list if l.get("netPercentChange", 0) < 0]
+    
+
+    
+    data = {
+        "gainers": [{"symbol": g.get("symbol"), "change_pct": g.get("netPercentChange")} for g in true_gainers[:count]],
+        "losers": [{"symbol": l.get("symbol"), "change_pct": l.get("netPercentChange")} for l in true_losers[:count]],
+    }
+    
+    if output_mode == "json":
+        print_json_response("movers", data=data)
+    else:
+        if not losers_only:
+            print("\n📈 TOP GAINERS")
+            for g in data["gainers"][:count]:
+                print(f"  {g['symbol']:8} +{g['change_pct']*100:.2f}%")
+        if not gainers_only:
+            print("\n📉 TOP LOSERS")
+            for l in data["losers"][:count]:
+                print(f"  {l['symbol']:8} {l['change_pct']*100:.2f}%")
+
+
+def show_futures(output_mode: str = "text") -> None:
+    """Show pre-market futures for /ES and /NQ."""
+    from datetime import datetime
+    
+    now = datetime.now().time()
+    # RTH: 9:30 AM - 4:00 PM ET
+    is_rth = now >= datetime.strptime("09:30", "%H:%M").time() and now <= datetime.strptime("16:00", "%H:%M").time()
+    
+    if is_rth and output_mode == "text":
+        print("\n⚠️  Futures only available outside regular trading hours (9:30 AM - 4:00 PM ET)")
+        print("   Markets are currently open. Use 'schwab indices' for current market data.")
+        return
+    
+    client = resolve_market_client()
+    
+    resp = client.get_quotes(["/ES", "/NQ"])
+    quotes = resp.json() if hasattr(resp, 'json') else resp
+    
+    data = {}
+    for sym in ["/ES", "/NQ"]:
+        if sym in quotes:
+            q = quotes[sym]
+            data[sym] = {
+                "price": q.get("askPrice") or q.get("lastPrice"),
+                "change": q.get("netChange"),
+                "change_pct": q.get("netPercentChange"),
+            }
+    
+    if output_mode == "json":
+        print_json_response("futures", data=data)
+    else:
+        print("\n🌙 PRE-MARKET FUTURES")
+        for sym, d in data.items():
+            name = "S&P 500 (/ES)" if sym == "/ES" else "Nasdaq (/NQ)"
+            sign = "+" if d.get("change_pct", 0) >= 0 else ""
+            print(f"  {name:20} ${d['price']:,.0f}  {sign}{d.get('change_pct', 0)*100:.2f}%")
+
+
+def show_fundamentals(symbol: str, output_mode: str = "text") -> None:
+    """Show fundamentals for a symbol."""
+    client = resolve_market_client()
+    
+    Instrument = client.Instrument.Projection
+    resp = client.get_instruments([symbol], Instrument.FUNDAMENTAL)
+    data = resp.json() if hasattr(resp, 'json') else resp
+    
+    instruments = data.get("instruments", []) if isinstance(data, dict) else []
+    inst = instruments[0].get("fundamental", {}) if instruments else {}
+    
+    if inst:
+        fund_data = {
+            "symbol": symbol,
+            "pe_ratio": inst.get("peRatio"),
+            "eps": inst.get("eps"),
+            "dividend_yield": inst.get("dividendYield"),
+            "dividend_amount": inst.get("dividendAmount"),
+            "52wk_high": inst.get("high52"),
+            "52wk_low": inst.get("low52"),
+            "market_cap": inst.get("marketCap"),
+        }
+        
+        if output_mode == "json":
+            print_json_response("fundamentals", data=fund_data)
+        else:
+            print(f"\n📊 {symbol} FUNDAMENTALS")
+            print(f"  P/E:        {fund_data['pe_ratio'] or 'N/A'}")
+            print(f"  EPS:        {fund_data['eps'] or 'N/A'}")
+            print(f"  Div Yield:  {fund_data['dividend_yield'] or 'N/A'}")
+            print(f"  Div Amount: ${fund_data['dividend_amount'] or 'N/A'}")
+            print(f"  52wk High:  ${fund_data['52wk_high'] or 'N/A'}")
+            print(f"  52wk Low:   ${fund_data['52wk_low'] or 'N/A'}")
+    else:
+        print(f"No data for {symbol}")
+
+
+def show_dividends(*, days: int = 30, output_mode: str = "text", upcoming: bool = False) -> None:
+    """Show recent dividend/interest transactions or upcoming ex-dates."""
+    command = "dividends"
+    try:
+        from datetime import timedelta
+
+        if upcoming:
+            # Get positions directly (fixed: was using subprocess anti-pattern)
+            raw_client = get_authenticated_client()
+            client = SchwabClientWrapper(raw_client)
+            positions = client.get_positions(None)
+
+            # Map common dividend-paying symbols to approximate ex-dates
+            ex_date_calendar = {
+                'VTI': {'ex_month': 1, 'day': 28, 'amount': 0.89},
+                'SCHD': {'ex_month': 2, 'day': 3, 'amount': 0.72},
+                'VOO': {'ex_month': 3, 'day': 22, 'amount': 1.85},
+                'QQQ': {'ex_month': 3, 'day': 20, 'amount': 1.12},
+            }
+
+            upcoming_divs = []
+            now = datetime.now()
+            for p in positions:
+                sym = p.get('symbol')
+                if sym in ex_date_calendar:
+                    ex_cal = ex_date_calendar[sym]
+                    # Check if this dividend is in the next 30 days
+                    ex_date = datetime(now.year, ex_cal['ex_month'], ex_cal['day'])
+                    if now <= ex_date <= now + timedelta(days=30):
+                        shares = p.get('quantity', 0)
+                        total = shares * ex_cal['amount']
+                        upcoming_divs.append({
+                            'symbol': sym,
+                            'ex_date': ex_date.strftime('%b %d'),
+                            'amount_per_share': ex_cal['amount'],
+                            'total': total,
+                            'shares': shares
+                        })
+
+            if output_mode == "json":
+                print_json_response(command, data={"upcoming": upcoming_divs})
+            else:
+                if upcoming_divs:
+                    print("\n📅 UPCOMING EX-DATES (next 30 days)")
+                    for d in upcoming_divs:
+                        print(f"  {d['symbol']:6} ex-div {d['ex_date']} (${d['amount_per_share']:.2f}/share) — ${d['total']:.2f} est.")
+                else:
+                    print("\n📅 No dividend ex-dates in the next 30 days")
+            return
+
+        # Historical dividends
+        raw_client = get_authenticated_client()
+        client = SchwabClientWrapper(raw_client)
+        TransactionType = raw_client.Transactions.TransactionType
+
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+
+        # Get all account hashes
+        all_dividends = []
+        for alias, info in secure_config.get_all_accounts().items():
+            account_number = secure_config.get_account_number(alias)
+            account_hash = client.get_account_hash(account_number)
+            if not account_hash:
+                continue
+
+            resp = raw_client.get_transactions(
+                account_hash,
+                start_date=start_date,
+                end_date=end_date,
+                transaction_types=[TransactionType.DIVIDEND_OR_INTEREST]
+            )
+            transactions = resp.json() if hasattr(resp, 'json') else resp
+            if isinstance(transactions, list):
+                all_dividends.extend([t for t in transactions if t.get("transactionType") in ["DIVIDEND", "INTEREST"]])
+
+        data = {
+            "transactions": [
+                {
+                    "date": t.get("tradeDate"),
+                    "symbol": t.get("symbol"),
+                    "description": t.get("description"),
+                    "amount": t.get("amount"),
+                }
+                for t in all_dividends
+            ]
+        }
+
+        if output_mode == "json":
+            print_json_response(command, data=data)
+        else:
+            total = sum(t.get("amount", 0) for t in all_dividends)
+            if all_dividends:
+                print(f"\n💰 DIVIDENDS ({days} days)")
+                for t in all_dividends:
+                    print(f"  {t.get('tradeDate'):10} {t.get('symbol', 'N/A'):8} ${t.get('amount', 0):>10,.2f}")
+                print(f"\n  TOTAL: ${total:,.2f}")
+            else:
+                print(f"\n💰 DIVIDENDS ({days} days)")
+                print("  No dividends received.")
+                print("\n  Use --upcoming to see ex-dates for your holdings")
+
+    except Exception as exc:
+        handle_cli_error(exc, output_mode=output_mode, command=command)
+
+def show_snapshot(*, output_mode: str) -> None:
+    """Get complete data snapshot for external consumers.
+
+    Aggregates portfolio, market, and position data into a single JSON payload.
+    Useful for clawdbot, external scripts, and automated reports.
+    """
+    command = "snapshot"
+    try:
+        snapshot: dict[str, Any] = {
+            "generated_at": datetime.now().isoformat(),
+            "errors": [],
+        }
+
+        # Portfolio data
+        try:
+            raw_client = get_authenticated_client()
+            client = SchwabClientWrapper(raw_client)
+            summary = client.get_portfolio_summary()
+            summary["positions"] = _sanitize_summary_positions(summary.get("positions", []))
+            snapshot["portfolio"] = {"summary": summary}
+        except Exception as e:
+            snapshot["portfolio"] = None
+            snapshot["errors"].append(f"portfolio: {e}")
+
+        # Positions
+        try:
+            raw_client = get_authenticated_client()
+            client = SchwabClientWrapper(raw_client)
+            positions = client.get_positions(None)
+            snapshot["positions"] = {"positions": positions}
+        except Exception as e:
+            snapshot["positions"] = None
+            snapshot["errors"].append(f"positions: {e}")
+
+        # Balances
+        try:
+            raw_client = get_authenticated_client()
+            client = SchwabClientWrapper(raw_client)
+            balances = client.get_account_balances()
+            snapshot["balances"] = {"balances": balances}
+        except Exception as e:
+            snapshot["balances"] = None
+            snapshot["errors"].append(f"balances: {e}")
+
+        # Allocation
+        try:
+            raw_client = get_authenticated_client()
+            client = SchwabClientWrapper(raw_client)
+            allocation = client.analyze_allocation()
+            snapshot["allocation"] = allocation
+        except Exception as e:
+            snapshot["allocation"] = None
+            snapshot["errors"].append(f"allocation: {e}")
+
+        # Market data (requires separate auth)
+        try:
+            market_client = resolve_market_client()
+            snapshot["market"] = get_market_signals(market_client)
+        except Exception as e:
+            snapshot["market"] = None
+            snapshot["errors"].append(f"market: {e}")
+
+        # VIX
+        try:
+            market_client = resolve_market_client()
+            snapshot["vix"] = get_vix(market_client)
+        except Exception as e:
+            snapshot["vix"] = None
+            snapshot["errors"].append(f"vix: {e}")
+
+        # Indices
+        try:
+            market_client = resolve_market_client()
+            snapshot["indices"] = get_market_indices(market_client)
+        except Exception as e:
+            snapshot["indices"] = None
+            snapshot["errors"].append(f"indices: {e}")
+
+        # Sectors
+        try:
+            market_client = resolve_market_client()
+            snapshot["sectors"] = get_sector_performance(market_client)
+        except Exception as e:
+            snapshot["sectors"] = None
+            snapshot["errors"].append(f"sectors: {e}")
+
+        # Clean up empty errors list
+        if not snapshot["errors"]:
+            del snapshot["errors"]
+
+        if output_mode == "json":
+            print_json_response(command, data=snapshot)
+        else:
+            # Text mode: print formatted JSON (snapshot is primarily for machine consumption)
+            print(f"\n{'=' * 60}")
+            print("DATA SNAPSHOT")
+            print(f"{'=' * 60}")
+            print(f"Generated: {snapshot['generated_at']}")
+
+            if snapshot.get("portfolio"):
+                summary = snapshot["portfolio"].get("summary", {})
+                print(f"\nPortfolio: ${summary.get('total_value', 0):,.2f}")
+                print(f"  Cash: ${summary.get('total_cash', 0):,.2f}")
+                print(f"  Positions: {summary.get('position_count', 0)}")
+
+            if snapshot.get("market"):
+                market = snapshot["market"]
+                print(f"\nMarket: {market.get('overall', 'N/A')}")
+                print(f"  Recommendation: {market.get('recommendation', 'N/A')}")
+
+            if snapshot.get("vix"):
+                vix = snapshot["vix"]
+                print(f"\nVIX: {vix.get('vix', 0):.2f} ({vix.get('signal', 'N/A')})")
+
+            if snapshot.get("errors"):
+                print(f"\nErrors: {len(snapshot['errors'])}")
+                for err in snapshot["errors"]:
+                    print(f"  - {err}")
+
+            print()
+
+    except Exception as exc:
+        handle_cli_error(exc, output_mode=output_mode, command=command)
+
+
 def main(args: list | None = None) -> None:
     """Main CLI entry point."""
     common_parser = argparse.ArgumentParser(add_help=False)
@@ -1137,6 +1747,10 @@ Examples:
   schwab sell acct_ira VTI 5 --yes       Market sell
   schwab orders acct_trading             Show open orders
 """,
+    )
+
+    parser.add_argument(
+        "--version", "-V", action="version", version=f"%(prog)s {__version__}"
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -1207,6 +1821,33 @@ Examples:
     subparsers.add_parser("market", help="Show market signals", parents=[common_parser])
 
     # Buy command
+
+    # Movers command
+    movers_parser = subparsers.add_parser("movers", help="Show top market movers", parents=[common_parser])
+    movers_parser.add_argument("--gainers", action="store_true", help="Show top gainers only")
+    movers_parser.add_argument("--losers", action="store_true", help="Show top losers only")
+    movers_parser.add_argument("--count", type=int, default=5, help="Number of movers to show (default: 5)")
+    
+    # Futures command
+    subparsers.add_parser("futures", help="Show pre-market futures", parents=[common_parser])
+    
+    # Fundamentals command
+    fundamentals_parser = subparsers.add_parser("fundamentals", help="Show instrument fundamentals", parents=[common_parser])
+    fundamentals_parser.add_argument("symbol", help="Symbol to get fundamentals for")
+    
+    # Dividends command
+    dividends_parser = subparsers.add_parser("dividends", help="Show recent dividends", parents=[common_parser])
+    dividends_parser.add_argument("--days", type=int, default=30, help="Days to look back (default: 30)")
+    dividends_parser.add_argument("--upcoming", action="store_true", help="Show upcoming ex-dates for your holdings")
+    
+    # Daily summary command
+    summary_parser = subparsers.add_parser("daily-summary", help="Generate morning brief", parents=[common_parser])
+    summary_parser.add_argument("--send", action="store_true", help="Send via email (Resend)")
+    summary_parser.add_argument("--output", "-o", help="Output path for HTML file")
+    summary_parser.add_argument("--no-email", action="store_true", help="Skip email even if configured")
+    
+    # Snapshot command - combined data dump for external consumers
+    snapshot_parser = subparsers.add_parser("snapshot", help="Get complete data snapshot (for external scripts)", parents=[common_parser])
     buy_parser = subparsers.add_parser("buy", help="Buy shares", parents=[common_parser])
     buy_parser.add_argument(
         "args",
@@ -1263,6 +1904,18 @@ Examples:
         show_sectors(output_mode=output_mode)
     elif parsed.command == "market":
         show_market_signals(output_mode=output_mode)
+    elif parsed.command == "movers":
+        show_movers(output_mode=output_mode, gainers_only=parsed.gainers, losers_only=parsed.losers, count=parsed.count)
+    elif parsed.command == "futures":
+        show_futures(output_mode=output_mode)
+    elif parsed.command == "fundamentals":
+        show_fundamentals(parsed.symbol, output_mode=output_mode)
+    elif parsed.command == "dividends":
+        show_dividends(days=parsed.days, output_mode=output_mode, upcoming=parsed.upcoming)
+    elif parsed.command == "daily-summary":
+        print("daily-summary: Use external script (clawd/scripts/daily_portfolio_review.py)")
+    elif parsed.command == "snapshot":
+        show_snapshot(output_mode=output_mode)  # Fixed: was calling undefined run_schwab()
     elif parsed.command == "auth":
         check_auth(output_mode=output_mode)
     elif parsed.command == "doctor":

@@ -71,10 +71,26 @@ class TokenManager:
             return None
 
     def get_token_info(self) -> dict[str, Any]:
-        """Get information about current token status"""
+        """Get information about current token status.
+
+        Returns dict with:
+            exists: bool - whether token file exists
+            valid: bool - whether token is not expired
+            created: str - ISO timestamp of creation
+            expires: str - ISO timestamp of expiration
+            expires_in_days: int - days until expiration
+            expires_in_hours: float - hours until expiration
+            warning: str|None - warning message if expiring soon
+            warning_level: str|None - "critical" (<24h), "warning" (<48h), "notice" (<72h)
+        """
         tokens = self.load_tokens()
         if not tokens:
-            return {"exists": False, "valid": False}
+            return {
+                "exists": False,
+                "valid": False,
+                "warning": "Token file not found. Run 'schwab-auth' to authenticate.",
+                "warning_level": "critical",
+            }
 
         # Check if token has creation timestamp
         creation_time = tokens.get("creation_timestamp")
@@ -84,17 +100,44 @@ class TokenManager:
                 expires = created + timedelta(days=7)
                 now = datetime.now()
 
+                time_remaining = expires - now
+                hours_remaining = time_remaining.total_seconds() / 3600
+                days_remaining = time_remaining.days
+
+                # Determine warning level
+                warning = None
+                warning_level = None
+                if hours_remaining <= 0:
+                    warning = "Token has EXPIRED. Run 'schwab-auth' to re-authenticate."
+                    warning_level = "critical"
+                elif hours_remaining < 24:
+                    warning = f"Token expires in {hours_remaining:.1f} hours! Run 'schwab-auth' soon."
+                    warning_level = "critical"
+                elif hours_remaining < 48:
+                    warning = f"Token expires in {days_remaining} days. Consider re-authenticating."
+                    warning_level = "warning"
+                elif hours_remaining < 72:
+                    warning = f"Token expires in {days_remaining} days."
+                    warning_level = "notice"
+
                 return {
                     "exists": True,
-                    "valid": now < expires,
+                    "valid": hours_remaining > 0,
                     "created": created.isoformat(),
                     "expires": expires.isoformat(),
-                    "expires_in_days": (expires - now).days if now < expires else 0,
+                    "expires_in_days": days_remaining if hours_remaining > 0 else 0,
+                    "expires_in_hours": round(hours_remaining, 1) if hours_remaining > 0 else 0,
+                    "warning": warning,
+                    "warning_level": warning_level,
                 }
             except (ValueError, TypeError):
                 pass
 
-        return {"exists": True, "valid": True, "note": "Cannot determine expiration"}
+        return {
+            "exists": True,
+            "valid": True,
+            "note": "Cannot determine expiration - missing creation_timestamp",
+        }
 
     def delete_tokens(self):
         """Delete token file (for re-authentication)"""

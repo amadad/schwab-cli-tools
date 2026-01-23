@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/amadad/schwab-cli-tools/schemas/portfolio.json",
+  "title": "Portfolio Command Response",
+  "description": "Schema for 'schwab portfolio --json' data field",
+  "type": "object",
+  "required": ["summary"],
+  "properties": {
+    "summary": {
+      "type": "object",
+      "required": ["total_value", "total_cash", "total_invested", "account_count", "position_count"],
+      "properties": {
+        "total_value": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total portfolio value in USD"
+        },
+        "total_cash": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total cash including money market funds"
+        },
+        "total_invested": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total invested value (total_value - total_cash)"
+        },
+        "account_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of accounts"
+        },
+        "position_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of non-cash positions"
+        },
+        "total_unrealized_pl": {
+          "type": "number",
+          "description": "Total unrealized profit/loss"
+        },
+        "positions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["symbol"],
+            "properties": {
+              "symbol": { "type": "string" },
+              "market_value": { "type": "number" },
+              "unrealized_pl": { "type": "number" },
+              "quantity": { "type": "number" },
+              "average_price": { "type": "number" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

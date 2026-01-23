@@ -8,7 +8,8 @@
 - Keep CLI output formatting in `src/schwab_client/cli.py`.
 
 ## Safety
-- Never commit `.env` or `config/accounts.json`.
+- Never commit `.env`, `config/accounts.json`, or anything under `private/` or `tokens/`.
+- Keep the repo matching upstream; put local data/artifacts in `private/` and account config in `config/`.
 - Avoid hardcoding account numbers or API keys.
 
 ## Workflow

@@ -1,9 +1,222 @@
 """Tests for Schwab CLI commands."""
 
+import json
+import sys
 from unittest.mock import MagicMock, patch
+
+import pytest
+
+from tests.conftest import (
+    CLIResult,
+    assert_json_error,
+    assert_json_success,
+    run_cli,
+    validate_envelope,
+)
+
+
+class TestCLIHelp:
+    """Tests for CLI help output."""
+
+    def test_help_flag_shows_usage(self):
+        """Test --help shows usage information."""
+        result = run_cli("--help")
+        assert result.exit_code == 0
+        assert "Schwab Portfolio Manager CLI" in result.stdout
+        assert "portfolio" in result.stdout
+        assert "positions" in result.stdout
+
+    def test_no_args_shows_help(self):
+        """Test running without args shows help."""
+        result = run_cli()
+        assert result.exit_code == 0
+        assert "usage:" in result.stdout.lower() or "commands:" in result.stdout.lower()
+
+    def test_subcommand_help(self):
+        """Test subcommand --help works."""
+        result = run_cli("buy", "--help")
+        assert result.exit_code == 0
+        assert "SYMBOL" in result.stdout or "symbol" in result.stdout.lower()
+
+    def test_invalid_command_shows_error(self):
+        """Test invalid command shows error."""
+        result = run_cli("notacommand")
+        assert result.exit_code != 0
+
+
+class TestJSONEnvelope:
+    """Tests for JSON response envelope format."""
+
+    def test_envelope_schema_validation(self):
+        """Test envelope validation function works."""
+        valid = {
+            "schema_version": 1,
+            "command": "test",
+            "timestamp": "2025-01-01T00:00:00",
+            "success": True,
+            "data": {},
+            "error": None,
+        }
+        assert validate_envelope(valid) == []
+
+    def test_envelope_missing_required_field(self):
+        """Test envelope validation catches missing fields."""
+        invalid = {"schema_version": 1, "command": "test"}
+        errors = validate_envelope(invalid)
+        assert len(errors) > 0
+        assert any("timestamp" in e or "success" in e for e in errors)
+
+    def test_envelope_wrong_schema_version(self):
+        """Test envelope validation catches wrong schema version."""
+        invalid = {
+            "schema_version": 2,
+            "command": "test",
+            "timestamp": "2025-01-01T00:00:00",
+            "success": True,
+        }
+        errors = validate_envelope(invalid)
+        assert any("schema_version" in e for e in errors)
+
+    def test_envelope_extra_fields_rejected(self):
+        """Test envelope validation catches unexpected fields."""
+        invalid = {
+            "schema_version": 1,
+            "command": "test",
+            "timestamp": "2025-01-01T00:00:00",
+            "success": True,
+            "extra_field": "bad",
+        }
+        errors = validate_envelope(invalid)
+        assert any("extra" in e.lower() for e in errors)
+
+
+class TestTradeSafety:
+    """Tests for trade safety mechanisms."""
+
+    def test_live_trading_disabled_by_default(self):
+        """Test live trading is blocked without env var."""
+        from src.schwab_client.cli import is_live_trading_enabled
+
+        import os
+        # Ensure env var is not set
+        os.environ.pop("SCHWAB_ALLOW_LIVE_TRADES", None)
+
+        assert is_live_trading_enabled() is False
+
+    def test_live_trading_enabled_with_env_var(self):
+        """Test live trading enabled with env var."""
+        from src.schwab_client.cli import is_live_trading_enabled
+
+        import os
+        os.environ["SCHWAB_ALLOW_LIVE_TRADES"] = "true"
+        try:
+            assert is_live_trading_enabled() is True
+        finally:
+            os.environ.pop("SCHWAB_ALLOW_LIVE_TRADES", None)
+
+    def test_ensure_trade_blocks_without_env_var(self):
+        """Test ensure_trade_confirmation blocks live trades."""
+        from src.schwab_client.cli import ensure_trade_confirmation
+        from src.core.errors import ConfigError
+
+        import os
+        os.environ.pop("SCHWAB_ALLOW_LIVE_TRADES", None)
+
+        with pytest.raises(ConfigError, match="Live trading is disabled"):
+            ensure_trade_confirmation(
+                output_mode="text",
+                auto_confirm=True,
+                dry_run=False,  # NOT a dry run
+                non_interactive=False,
+            )
+
+    def test_ensure_trade_allows_dry_run(self):
+        """Test dry-run is always allowed."""
+        from src.schwab_client.cli import ensure_trade_confirmation
+
+        import os
+        os.environ.pop("SCHWAB_ALLOW_LIVE_TRADES", None)
+
+        # Should not raise - dry_run is always allowed
+        ensure_trade_confirmation(
+            output_mode="text",
+            auto_confirm=False,
+            dry_run=True,
+            non_interactive=False,
+        )
+
+
+class TestCLIResult:
+    """Tests for CLIResult helper class."""
+
+    def test_cli_result_success_property(self):
+        """Test CLIResult.success property."""
+        success = CLIResult(exit_code=0, stdout="", stderr="")
+        failure = CLIResult(exit_code=1, stdout="", stderr="")
+
+        assert success.success is True
+        assert failure.success is False
+
+    def test_cli_result_get_data(self):
+        """Test CLIResult.get_data() method."""
+        result = CLIResult(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            json_data={"data": {"key": "value"}},
+        )
+        assert result.get_data() == {"key": "value"}
+
+    def test_cli_result_get_data_no_json(self):
+        """Test CLIResult.get_data() raises without JSON."""
+        result = CLIResult(exit_code=0, stdout="text output", stderr="")
+        with pytest.raises(ValueError, match="No JSON data"):
+            result.get_data()
+
+
+class TestAccountsCommandJSON:
+    """Tests for accounts command JSON output."""
+
+    @patch("src.schwab_client.cli.secure_config")
+    def test_accounts_json_envelope(self, mock_config):
+        """Test accounts --json returns valid envelope."""
+        mock_info = MagicMock()
+        mock_info.alias = "test_acct"
+        mock_info.label = "Test"
+        mock_info.name = "Test Account"
+        mock_info.account_type = "Individual"
+        mock_info.tax_status = "taxable"
+        mock_info.category = "trading"
+        mock_info.account_number = "12345678"
+        mock_info.notes = None
+        mock_info.distribution_deadline = None
+        mock_info.beneficiary = None
+
+        mock_config.get_all_accounts.return_value = {"test_acct": mock_info}
+        mock_config.mask_account_number.return_value = "****5678"
+
+        from src.schwab_client.cli import main
+
+        # Capture stdout
+        import io
+        from contextlib import redirect_stdout
+
+        f = io.StringIO()
+        with redirect_stdout(f):
+            main(["accounts", "--json"])
+
+        output = f.getvalue()
+        data = json.loads(output)
+
+        errors = validate_envelope(data)
+        assert not errors, f"Envelope errors: {errors}"
+        assert data["command"] == "accounts"
+        assert data["success"] is True
+        assert "accounts" in data["data"]
 
 
 class TestPortfolioCommand:
+    """Tests for portfolio command output."""
     """Tests for portfolio command output."""
 
     @patch("src.schwab_client.cli.get_authenticated_client")

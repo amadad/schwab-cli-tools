@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/amadad/schwab-cli-tools/schemas/doctor.json",
+  "title": "Doctor Command Response",
+  "description": "Schema for 'schwab doctor --json' data field",
+  "type": "object",
+  "required": ["data_dir", "portfolio", "market", "accounts", "warnings"],
+  "properties": {
+    "data_dir": {
+      "type": "string",
+      "description": "Path to CLI data directory"
+    },
+    "portfolio": {
+      "type": "object",
+      "required": ["credentials_present", "token_path", "token"],
+      "properties": {
+        "credentials_present": { "type": "boolean" },
+        "token_path": { "type": "string" },
+        "token": {
+          "type": "object",
+          "properties": {
+            "exists": { "type": "boolean" },
+            "valid": { "type": "boolean" },
+            "expires": { "type": ["string", "null"] },
+            "expires_at": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "market": {
+      "type": "object",
+      "required": ["credentials_present", "token_path", "token"],
+      "properties": {
+        "credentials_present": { "type": "boolean" },
+        "token_path": { "type": "string" },
+        "token": {
+          "type": "object",
+          "properties": {
+            "exists": { "type": "boolean" },
+            "valid": { "type": "boolean" },
+            "expires": { "type": ["string", "null"] },
+            "expires_at": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "accounts": {
+      "type": "object",
+      "required": ["configured", "count", "path"],
+      "properties": {
+        "configured": { "type": "boolean" },
+        "count": { "type": "integer", "minimum": 0 },
+        "path": { "type": "string" }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of warning codes"
+    }
+  }
+}

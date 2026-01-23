@@ -8,6 +8,7 @@ schwab-cli-tools: agent-friendly Schwab CLI for portfolio analysis, market insig
 uv sync
 cp .env.example .env
 cp config/accounts.template.json config/accounts.json
+mkdir -p tokens private
 ```
 
 ## Auth
@@ -17,10 +18,28 @@ uv run schwab-auth
 uv run schwab-market-auth
 ```
 
-Tokens live under `~/.schwab-cli-tools/tokens` by default (override with
-`SCHWAB_CLI_DATA_DIR`, `SCHWAB_TOKEN_PATH`, `SCHWAB_MARKET_TOKEN_PATH`). Reports
-default to `~/.schwab-cli-tools/reports` (override `SCHWAB_REPORT_DIR`). Refresh
-tokens expire after 7 days.
+Tokens default to `~/.schwab-cli-tools/tokens`. In this repo, keep tokens in
+`./tokens` (gitignored) by setting `SCHWAB_CLI_DATA_DIR=.` or explicit
+`SCHWAB_TOKEN_PATH` / `SCHWAB_MARKET_TOKEN_PATH`. Reports default to
+`~/.schwab-cli-tools/reports`; set `SCHWAB_REPORT_DIR=./private/reports` to keep
+them under `private/`. Refresh tokens expire after 7 days.
+
+## Local Data Layout
+
+Keep the working tree matching upstream; local artifacts live in gitignored folders:
+- `config/accounts.json` (account aliases + numbers)
+- `tokens/` (auth tokens when repo-local paths are configured)
+- `private/` (notes, snapshots, reports, journal, reviews, market_cycle, etc.)
+
+Recommended `.env` overrides for repo-local data:
+
+```bash
+SCHWAB_CLI_DATA_DIR=.
+SCHWAB_REPORT_DIR=./private/reports
+# Optional explicit token paths:
+SCHWAB_TOKEN_PATH=./tokens/schwab_token.json
+SCHWAB_MARKET_TOKEN_PATH=./tokens/schwab_market_token.json
+```
 
 ## CLI Contract
 
@@ -68,10 +87,25 @@ Errors set `success=false` and populate `error`.
 
 ### Trade Safety
 
-- `--dry-run` previews without placing an order.
-- `--yes` skips confirmation prompts.
+**CRITICAL: Live trading is DISABLED by default.**
+
+To execute real trades, you must explicitly enable them:
+
+```bash
+export SCHWAB_ALLOW_LIVE_TRADES=true
+```
+
+Without this, only `--dry-run` is allowed. This prevents accidental trades from
+scripts, agents, or automation.
+
+Additional safeguards:
+- `--dry-run` previews without placing an order (always allowed).
+- `--yes` skips interactive confirmation (still requires `SCHWAB_ALLOW_LIVE_TRADES`).
 - `--non-interactive` fails if a prompt would occur.
 - In JSON mode, buy/sell require `--yes` or `--dry-run`.
+
+For clawdbot/automation: Use `--dry-run` for reports. Never set `SCHWAB_ALLOW_LIVE_TRADES`
+in automated environments unless you have explicit approval workflows.
 
 ### Exit Codes
 
@@ -85,10 +119,13 @@ Errors set `success=false` and populate `error`.
 src/core/           # Shared portfolio + market logic
 src/schwab_client/  # Schwab API wrapper + CLI
 config/             # Account config (accounts.json gitignored)
+tokens/             # Auth tokens (gitignored, repo-local when configured)
+private/            # Local notes/snapshots/reports/etc. (gitignored)
 ```
 
 ## Critical Rules
 
-1. Never commit `.env` or `config/accounts.json`. Tokens live under `~/.schwab-cli-tools/`.
+1. Never commit `.env`, `config/accounts.json`, `tokens/`, or anything under `private/`.
+   Repo-local tokens live in `./tokens` when configured; otherwise use `~/.schwab-cli-tools`.
 2. Never hardcode account numbers or API keys.
 3. Use `hashValue` from `get_account_numbers()` for API calls.

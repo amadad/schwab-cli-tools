@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/amadad/schwab-cli-tools/schemas/envelope.json",
+  "title": "Schwab CLI Response Envelope",
+  "description": "Standard JSON response envelope for all schwab CLI commands",
+  "type": "object",
+  "required": ["schema_version", "command", "timestamp", "success"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "API schema version for compatibility checking"
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The CLI command that was executed"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of when the command was executed"
+    },
+    "success": {
+      "type": "boolean",
+      "description": "Whether the command completed successfully"
+    },
+    "data": {
+      "type": ["object", "null"],
+      "description": "Command-specific response data (null on error)"
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["message", "type"],
+          "properties": {
+            "message": {
+              "type": "string",
+              "description": "Human-readable error message"
+            },
+            "type": {
+              "type": "string",
+              "description": "Error class name (e.g., ConfigError, AuthError)"
+            },
+            "status_code": {
+              "type": "integer",
+              "description": "HTTP status code for API errors"
+            }
+          }
+        }
+      ],
+      "description": "Error details (null on success)"
+    }
+  }
+}
