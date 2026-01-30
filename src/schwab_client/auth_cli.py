@@ -8,7 +8,7 @@ Usage:
 import argparse
 import sys
 
-from .auth import TokenManager, authenticate_interactive
+from .auth import TokenManager, authenticate_interactive, authenticate_manual
 
 
 def parse_args() -> argparse.Namespace:
@@ -17,6 +17,12 @@ def parse_args() -> argparse.Namespace:
         "--force",
         action="store_true",
         help="Re-authenticate even if a valid token exists.",
+    )
+    parser.add_argument(
+        "--manual",
+        action="store_true",
+        help="Use manual flow for headless/remote environments. "
+        "Prints URL to open on any browser, then prompts for callback URL.",
     )
     parser.add_argument(
         "--interactive",
@@ -59,14 +65,17 @@ def main() -> None:
             else:
                 print("Re-authenticating (forced).")
 
-        print("\nStarting OAuth2 flow...")
-        print("A browser window will open for login.\n")
-
-        client = authenticate_interactive(
-            interactive=args.interactive,
-            requested_browser=args.browser,
-            callback_timeout=args.timeout,
-        )
+        if args.manual:
+            print("\nStarting manual OAuth2 flow (for headless/remote)...\n")
+            client = authenticate_manual()
+        else:
+            print("\nStarting OAuth2 flow...")
+            print("A browser window will open for login.\n")
+            client = authenticate_interactive(
+                interactive=args.interactive,
+                requested_browser=args.browser,
+                callback_timeout=args.timeout,
+            )
 
         if client:
             print("\nAuthentication successful!")

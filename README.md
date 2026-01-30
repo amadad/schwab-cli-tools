@@ -22,12 +22,17 @@ mkdir -p tokens private
 ## Authentication
 
 ```bash
-uv run schwab-auth          # Portfolio API
+uv run schwab-auth          # Portfolio API (opens browser)
+uv run schwab-auth --manual # For headless/remote machines (copy-paste flow)
 uv run schwab-market-auth   # Market data API
 ```
 
+The `--manual` flag is for headless servers or SSH sessions where a browser can't open
+locally. It prints a URL you can open on any device, then prompts for the callback URL.
+
 Market commands (`vix`, `indices`, `sectors`, `market`, `movers`, `futures`) require
 the market auth flow. Tokens are stored under `~/.schwab-cli-tools/tokens` by default.
+Refresh tokens expire after 7 days.
 
 ## CLI Commands
 
@@ -90,10 +95,12 @@ schwab snap --json         # For automation (alias)
 ### Trade Commands
 
 ```bash
-schwab buy ACCOUNT AAPL 10 --dry-run    # Preview buy
-schwab sell ACCOUNT AAPL 10 --dry-run   # Preview sell
-schwab orders ACCOUNT                    # Show open orders
-schwab ord                               # Alias
+schwab buy acct_trading AAPL 10 --dry-run   # Preview buy
+schwab sell acct_trading AAPL 10 --dry-run  # Preview sell
+schwab buy acct_trading AAPL 10 --live      # Execute with --live flag
+schwab sell acct_trading AAPL 10 --live     # Execute with --live flag
+schwab orders acct_trading                   # Show open orders
+schwab ord                                   # Alias
 ```
 
 ## Command Aliases
@@ -120,9 +127,15 @@ schwab ord                               # Alias
 
 **Live trading is DISABLED by default.** This is a critical safety feature.
 
+To execute real trades, use one of these methods:
+
 ```bash
-# Enable live trading (required for real orders)
+# Method 1: --live flag (per-command, recommended)
+schwab sell acct_trading AAPL 10 --live
+
+# Method 2: Environment variable (session-wide)
 export SCHWAB_ALLOW_LIVE_TRADES=true
+schwab sell acct_trading AAPL 10
 ```
 
 Additional safeguards:

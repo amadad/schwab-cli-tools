@@ -42,7 +42,8 @@ src/schwab_client/cli/
 - Never commit `.env`, `config/accounts.json`, or anything under `private/` or `tokens/`.
 - Keep the repo matching upstream; put local data/artifacts in `private/`.
 - Avoid hardcoding account numbers or API keys.
-- Live trading is disabled by default. Never enable `SCHWAB_ALLOW_LIVE_TRADES` in automation.
+- Live trading is disabled by default. Never use `--live` or `SCHWAB_ALLOW_LIVE_TRADES` in automation.
+- For headless/SSH auth, use `schwab-auth --manual` (copy-paste URL flow).
 
 ## Testing
 

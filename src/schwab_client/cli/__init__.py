@@ -220,6 +220,7 @@ Examples:
     )
     buy_parser.add_argument("--limit", type=float, help="Limit price")
     buy_parser.add_argument("--dry-run", action="store_true", help="Preview only")
+    buy_parser.add_argument("--live", action="store_true", help="Enable live trading for this command")
     buy_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
 
     sell_parser = subparsers.add_parser("sell", help="Sell shares", parents=[common_parser])
@@ -228,6 +229,7 @@ Examples:
     )
     sell_parser.add_argument("--limit", type=float, help="Limit price")
     sell_parser.add_argument("--dry-run", action="store_true", help="Preview only")
+    sell_parser.add_argument("--live", action="store_true", help="Enable live trading for this command")
     sell_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
 
     orders_parser = subparsers.add_parser(
@@ -317,6 +319,7 @@ def main(args: list | None = None) -> None:
             getattr(parsed, "args", []),
             limit_price=getattr(parsed, "limit", None),
             dry_run=getattr(parsed, "dry_run", False),
+            live=getattr(parsed, "live", False),
             output_mode=output_mode,
             auto_confirm=getattr(parsed, "yes", False),
             non_interactive=non_interactive,
@@ -326,6 +329,7 @@ def main(args: list | None = None) -> None:
             getattr(parsed, "args", []),
             limit_price=getattr(parsed, "limit", None),
             dry_run=getattr(parsed, "dry_run", False),
+            live=getattr(parsed, "live", False),
             output_mode=output_mode,
             auto_confirm=getattr(parsed, "yes", False),
             non_interactive=non_interactive,

@@ -14,9 +14,13 @@ mkdir -p tokens private
 ## Auth
 
 ```bash
-uv run schwab-auth
-uv run schwab-market-auth
+uv run schwab-auth            # Opens browser for OAuth
+uv run schwab-auth --manual   # For headless/SSH (copy-paste URL flow)
+uv run schwab-market-auth     # Market data API
 ```
+
+The `--manual` flag prints a URL you can open on any browser (even a different machine),
+then prompts you to paste the callback URL. Use this for headless servers or SSH sessions.
 
 Tokens default to `~/.schwab-cli-tools/tokens`. In this repo, keep tokens in
 `./tokens` (gitignored) by setting `SCHWAB_CLI_DATA_DIR=.` or explicit
@@ -93,14 +97,19 @@ Errors set `success=false` and populate `error`.
 
 **CRITICAL: Live trading is DISABLED by default.**
 
-To execute real trades, you must explicitly enable them:
+To execute real trades, use one of these methods:
 
 ```bash
+# Method 1: --live flag (per-command, recommended)
+uv run schwab sell acct_trading AAPL 10 --live
+
+# Method 2: Environment variable (session-wide)
 export SCHWAB_ALLOW_LIVE_TRADES=true
+uv run schwab sell acct_trading AAPL 10
 ```
 
-Without this, only `--dry-run` is allowed. This prevents accidental trades from
-scripts, agents, or automation.
+Without `--live` or the env var, only `--dry-run` is allowed. This prevents accidental
+trades from scripts, agents, or automation.
 
 Additional safeguards:
 - `--dry-run` previews without placing an order (always allowed).
@@ -109,8 +118,8 @@ Additional safeguards:
 - JSON mode cannot execute live trades (use `--dry-run` only).
 - All trade attempts are logged to `~/.schwab-cli-tools/trade_audit.log`.
 
-For clawdbot/automation: Use `--dry-run` for previews. Never set `SCHWAB_ALLOW_LIVE_TRADES`
-in automated environments unless you have explicit approval workflows.
+For clawdbot/automation: Use `--dry-run` for previews. Never use `--live` or set
+`SCHWAB_ALLOW_LIVE_TRADES` in automated environments unless you have explicit approval.
 
 ### Exit Codes
 

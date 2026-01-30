@@ -70,8 +70,10 @@ def parse_orders_account(args: list[str]) -> str:
     return resolve_account_alias(account)
 
 
-def is_live_trading_enabled() -> bool:
-    """Check if live trading is explicitly enabled via environment variable."""
+def is_live_trading_enabled(live_flag: bool = False) -> bool:
+    """Check if live trading is enabled via environment variable or --live flag."""
+    if live_flag:
+        return True
     value = os.getenv(LIVE_TRADES_ENV_VAR, "").strip().lower()
     return value in ("true", "1", "yes")
 
@@ -82,13 +84,13 @@ def is_interactive_tty() -> bool:
 
 
 def ensure_trade_confirmation(
-    *, output_mode: str, auto_confirm: bool, dry_run: bool, non_interactive: bool
+    *, output_mode: str, auto_confirm: bool, dry_run: bool, non_interactive: bool, live: bool = False
 ) -> None:
     """Enforce confirmation rules for trade commands.
 
     SAFETY RULES:
     1. --dry-run is ALWAYS allowed (preview mode)
-    2. Live trades require SCHWAB_ALLOW_LIVE_TRADES=true
+    2. Live trades require SCHWAB_ALLOW_LIVE_TRADES=true OR --live flag
     3. Live trades require interactive TTY (blocks automation)
     4. Live trades ALWAYS require typing "CONFIRM"
     5. JSON mode can only do --dry-run
@@ -96,9 +98,9 @@ def ensure_trade_confirmation(
     if dry_run:
         return
 
-    if not is_live_trading_enabled():
+    if not is_live_trading_enabled(live_flag=live):
         raise ConfigError(
-            f"Live trading is disabled. Set {LIVE_TRADES_ENV_VAR}=true to enable, "
+            f"Live trading is disabled. Use --live flag or set {LIVE_TRADES_ENV_VAR}=true, "
             "or use --dry-run to preview orders."
         )
 
@@ -189,6 +191,7 @@ def execute_trade(
     action: Literal["buy", "sell"],
     limit_price: float | None,
     dry_run: bool,
+    live: bool,
     output_mode: str,
     auto_confirm: bool,
     non_interactive: bool,
@@ -256,6 +259,7 @@ def execute_trade(
             auto_confirm=auto_confirm,
             dry_run=dry_run,
             non_interactive=non_interactive,
+            live=live,
         )
 
         # Show preview
@@ -328,6 +332,7 @@ def cmd_buy(
     *,
     limit_price: float | None = None,
     dry_run: bool = False,
+    live: bool = False,
     output_mode: str = "text",
     auto_confirm: bool = False,
     non_interactive: bool = False,
@@ -338,6 +343,7 @@ def cmd_buy(
         action="buy",
         limit_price=limit_price,
         dry_run=dry_run,
+        live=live,
         output_mode=output_mode,
         auto_confirm=auto_confirm,
         non_interactive=non_interactive,
@@ -349,6 +355,7 @@ def cmd_sell(
     *,
     limit_price: float | None = None,
     dry_run: bool = False,
+    live: bool = False,
     output_mode: str = "text",
     auto_confirm: bool = False,
     non_interactive: bool = False,
@@ -359,6 +366,7 @@ def cmd_sell(
         action="sell",
         limit_price=limit_price,
         dry_run=dry_run,
+        live=live,
         output_mode=output_mode,
         auto_confirm=auto_confirm,
         non_interactive=non_interactive,

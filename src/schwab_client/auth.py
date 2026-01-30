@@ -92,11 +92,72 @@ class TokenManager:
                 "warning_level": "critical",
             }
 
-        # Check if token has creation timestamp
+        # Check if token has creation timestamp (Unix timestamp) or expires_at in token
         creation_time = tokens.get("creation_timestamp")
+        token_data = tokens.get("token", {})
+        expires_at = token_data.get("expires_at") if isinstance(token_data, dict) else None
+
+        # Try to determine expiration from token.expires_at (most reliable)
+        if expires_at:
+            try:
+                expires = datetime.fromtimestamp(expires_at)
+                # Estimate creation as 30 minutes before expiry (access token lifetime)
+                # But refresh token is what matters - it's 7 days from creation
+                # Use creation_timestamp if available for refresh token expiry
+                if creation_time:
+                    if isinstance(creation_time, (int, float)):
+                        created = datetime.fromtimestamp(creation_time)
+                    else:
+                        created = datetime.fromisoformat(str(creation_time))
+                    refresh_expires = created + timedelta(days=7)
+                else:
+                    # Estimate: refresh token expires ~7 days after access token was issued
+                    created = expires - timedelta(minutes=30)
+                    refresh_expires = created + timedelta(days=7)
+
+                now = datetime.now()
+
+                # Check refresh token expiry (the real limit)
+                time_remaining = refresh_expires - now
+                hours_remaining = time_remaining.total_seconds() / 3600
+                days_remaining = time_remaining.days
+
+                # Determine warning level
+                warning = None
+                warning_level = None
+                if hours_remaining <= 0:
+                    warning = "Token has EXPIRED. Run 'schwab-auth' to re-authenticate."
+                    warning_level = "critical"
+                elif hours_remaining < 24:
+                    warning = f"Token expires in {hours_remaining:.1f} hours! Run 'schwab-auth' soon."
+                    warning_level = "critical"
+                elif hours_remaining < 48:
+                    warning = f"Token expires in {days_remaining} days. Consider re-authenticating."
+                    warning_level = "warning"
+                elif hours_remaining < 72:
+                    warning = f"Token expires in {days_remaining} days."
+                    warning_level = "notice"
+
+                return {
+                    "exists": True,
+                    "valid": hours_remaining > 0,
+                    "created": created.isoformat(),
+                    "expires": refresh_expires.isoformat(),
+                    "expires_in_days": days_remaining if hours_remaining > 0 else 0,
+                    "expires_in_hours": round(hours_remaining, 1) if hours_remaining > 0 else 0,
+                    "warning": warning,
+                    "warning_level": warning_level,
+                }
+            except (ValueError, TypeError, OSError):
+                pass
+
+        # Fallback: try creation_timestamp alone (legacy format)
         if creation_time:
             try:
-                created = datetime.fromisoformat(creation_time)
+                if isinstance(creation_time, (int, float)):
+                    created = datetime.fromtimestamp(creation_time)
+                else:
+                    created = datetime.fromisoformat(str(creation_time))
                 expires = created + timedelta(days=7)
                 now = datetime.now()
 
@@ -130,13 +191,14 @@ class TokenManager:
                     "warning": warning,
                     "warning_level": warning_level,
                 }
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OSError):
                 pass
 
         return {
             "exists": True,
-            "valid": True,
-            "note": "Cannot determine expiration - missing creation_timestamp",
+            "valid": False,
+            "warning": "Cannot determine token expiration. Run 'schwab-auth --force' to re-authenticate.",
+            "warning_level": "warning",
         }
 
     def delete_tokens(self):
@@ -243,6 +305,68 @@ def authenticate_interactive(
         callback_timeout=callback_timeout,
         interactive=interactive,
         requested_browser=requested_browser,
+    )
+
+    print()
+    print(f"Authentication successful! Tokens saved to {token_path}")
+    print("Tokens are valid for 7 days before re-authentication is required.")
+    return client
+
+
+def authenticate_manual(
+    api_key: str | None = None,
+    app_secret: str | None = None,
+    callback_url: str = "https://127.0.0.1:8001",
+    token_path: Path | None = None,
+):
+    """
+    Run manual authentication flow for headless/remote environments.
+
+    This flow prints a URL that you can open on ANY browser (even a different machine),
+    then prompts you to paste the callback URL after authorization.
+
+    Use this when:
+    - Running on a headless server
+    - Running remotely via SSH
+    - Running in a container/cloud environment
+    """
+    api_key = api_key or os.getenv("SCHWAB_INTEL_APP_KEY")
+    app_secret = app_secret or os.getenv("SCHWAB_INTEL_CLIENT_SECRET")
+    token_path = token_path or DEFAULT_TOKEN_PATH
+
+    if not api_key or not app_secret:
+        raise ConfigError(
+            "Missing Schwab credentials. Set SCHWAB_INTEL_APP_KEY and "
+            "SCHWAB_INTEL_CLIENT_SECRET environment variables."
+        )
+
+    Path(token_path).parent.mkdir(parents=True, exist_ok=True)
+
+    print()
+    print("=" * 60)
+    print("MANUAL AUTHENTICATION FLOW")
+    print("=" * 60)
+    print()
+    print("This flow works on headless/remote machines.")
+    print()
+    print("Steps:")
+    print("  1. Copy the URL printed below")
+    print("  2. Open it in ANY browser (local machine, phone, etc.)")
+    print("  3. Log into Schwab and authorize the app")
+    print()
+    print("  4. Your browser will show 'Can't connect to server' or similar")
+    print("     THIS IS EXPECTED - don't worry!")
+    print()
+    print("  5. Copy the FULL URL from your browser's address bar")
+    print("     (starts with https://127.0.0.1:8001/?code=...)")
+    print("  6. Paste it back here")
+    print()
+
+    client = auth.client_from_manual_flow(
+        api_key=api_key,
+        app_secret=app_secret,
+        callback_url=callback_url,
+        token_path=str(token_path),
     )
 
     print()
