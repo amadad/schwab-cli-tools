@@ -236,6 +236,22 @@ class SchwabClientWrapper:
         response.raise_for_status()
         return response.json()
 
+    def get_order(self, account_hash: str, order_id: int) -> dict[str, Any] | None:
+        """
+        Get a specific order by ID.
+
+        Args:
+            account_hash: Account hash from get_account_numbers()
+            order_id: Order ID
+
+        Returns:
+            Order dict or None if not found
+        """
+        response = self._client.get_order(order_id, account_hash)
+        if response.status_code == 200:
+            return response.json()
+        return None
+
     def get_transactions(
         self,
         account_hash: str,
@@ -300,6 +316,13 @@ class SchwabClientWrapper:
             location = response.headers.get("Location", "")
             # Extract order ID from location URL
             order_id = location.split("/")[-1] if location else None
+
+            # Verify order status - Schwab may accept but then reject asynchronously
+            if order_id:
+                order_status = self._check_order_status(account_hash, order_id)
+                if order_status:
+                    return order_status
+
             return {
                 "success": True,
                 "order_id": order_id,
@@ -311,6 +334,41 @@ class SchwabClientWrapper:
                 "error": response.text,
                 "status_code": response.status_code,
             }
+
+    def _check_order_status(self, account_hash: str, order_id: str) -> dict[str, Any] | None:
+        """
+        Check if an order was accepted or rejected after submission.
+
+        Schwab may accept an order (201) but then reject it asynchronously.
+        This checks the actual order status and returns rejection details.
+        """
+        try:
+            response = self._client.get_order(int(order_id), account_hash)
+            if response.status_code == 200:
+                order_data = response.json()
+                status = order_data.get("status", "UNKNOWN")
+
+                if status == "REJECTED":
+                    status_description = order_data.get("statusDescription", "Unknown reason")
+                    return {
+                        "success": False,
+                        "order_id": order_id,
+                        "status": "REJECTED",
+                        "error": f"Order rejected: {status_description}",
+                        "status_description": status_description,
+                        "status_code": 201,  # Was accepted but rejected
+                    }
+                elif status in ("FILLED", "WORKING", "PENDING_ACTIVATION", "QUEUED", "ACCEPTED"):
+                    return {
+                        "success": True,
+                        "order_id": order_id,
+                        "status": status,
+                        "status_code": 201,
+                    }
+            return None
+        except Exception as e:
+            logger.warning(f"Could not verify order status: {e}")
+            return None
 
     def buy_market(
         self,

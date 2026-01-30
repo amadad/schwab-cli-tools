@@ -22,6 +22,17 @@ uv run schwab-market-auth     # Market data API
 The `--manual` flag prints a URL you can open on any browser (even a different machine),
 then prompts you to paste the callback URL. Use this for headless servers or SSH sessions.
 
+### thinkorswim Enablement (Required for Trading)
+
+Each account must be **thinkorswim enabled** on schwab.com to place orders via API.
+Without this, orders are rejected with "No trades are currently allowed".
+
+1. schwab.com → Trade → Trading Platforms → Enable thinkorswim
+2. Select accounts to enable (wait for "Pending Enablement" to complete)
+3. Re-run `schwab-auth` to refresh token
+
+Read-only access (positions, balances, quotes) works without this step.
+
 Tokens default to `~/.schwab-cli-tools/tokens`. In this repo, keep tokens in
 `./tokens` (gitignored) by setting `SCHWAB_CLI_DATA_DIR=.` or explicit
 `SCHWAB_TOKEN_PATH` / `SCHWAB_MARKET_TOKEN_PATH`. Reports default to

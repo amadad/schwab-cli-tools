@@ -196,7 +196,7 @@ def cmd_accounts(*, output_mode: str = "text") -> None:
                 {
                     "alias": alias,
                     "label": info.label,
-                    "description": info.description,
+                    "notes": info.notes,
                     "account_number_last4": info.account_number[-4:] if info.account_number else None,
                 }
                 for alias, info in accounts.items()
@@ -214,7 +214,7 @@ def cmd_accounts(*, output_mode: str = "text") -> None:
         else:
             for alias, info in accounts.items():
                 last4 = info.account_number[-4:] if info.account_number else "????"
-                print(f"  {alias:20s} (...{last4})  {info.description or ''}")
+                print(f"  {alias:20s} (...{last4})  {info.notes or ''}")
 
         print()
 

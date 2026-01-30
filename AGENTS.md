@@ -44,6 +44,8 @@ src/schwab_client/cli/
 - Avoid hardcoding account numbers or API keys.
 - Live trading is disabled by default. Never use `--live` or `SCHWAB_ALLOW_LIVE_TRADES` in automation.
 - For headless/SSH auth, use `schwab-auth --manual` (copy-paste URL flow).
+- Trading requires **thinkorswim enablement** on schwab.com for each account.
+  Without it, orders fail with "No trades are currently allowed".
 
 ## Testing
 

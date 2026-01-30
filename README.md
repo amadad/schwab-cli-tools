@@ -27,6 +27,20 @@ uv run schwab-auth --manual # For headless/remote machines (copy-paste flow)
 uv run schwab-market-auth   # Market data API
 ```
 
+### thinkorswim Enablement (Required for Trading)
+
+To place orders via the API, each Schwab account must be **thinkorswim enabled**:
+
+1. Log into [schwab.com](https://www.schwab.com)
+2. Go to **Trade** → **Trading Platforms**
+3. Click **"Learn how to enable thinkorswim"**
+4. Select the accounts you want to enable for API trading
+5. Wait for "Pending Enablement" to complete (may take minutes to hours)
+6. Re-run `schwab-auth` to refresh your token
+
+Without thinkorswim enablement, orders will be rejected with "No trades are currently allowed".
+Read-only access (positions, balances, quotes) works without this step.
+
 The `--manual` flag is for headless servers or SSH sessions where a browser can't open
 locally. It prints a URL you can open on any device, then prompts for the callback URL.
 

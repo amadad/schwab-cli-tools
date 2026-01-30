@@ -70,9 +70,9 @@ def parse_trade_args(
         return account_alias, symbol.upper(), None
 
     try:
-        quantity = int(quantity_raw)
+        quantity = float(quantity_raw)
     except ValueError as exc:
-        raise ConfigError("Quantity must be an integer.") from exc
+        raise ConfigError("Quantity must be a number.") from exc
 
     return account_alias, symbol.upper(), quantity
 
@@ -362,8 +362,11 @@ def execute_trade(
             )
             print("\nOrder submitted successfully!")
             print(f"Order ID: {result.get('order_id')}")
+            if result.get("status"):
+                print(f"Status: {result.get('status')}")
         else:
             error_msg = result.get("error", "Unknown error")
+            status_desc = result.get("status_description", "")
             log_trade_attempt(
                 action=action_upper,
                 symbol=symbol,
@@ -372,6 +375,22 @@ def execute_trade(
                 limit_price=limit_price,
                 error=error_msg,
             )
+
+            # Provide helpful guidance for common rejection reasons
+            if "No trades are currently allowed" in error_msg:
+                print(f"\n{'=' * 60}")
+                print("ORDER REJECTED: Account not enabled for API trading")
+                print(f"{'=' * 60}")
+                print(f"\nReason: {status_desc or error_msg}")
+                print("\nThis account is not authorized for third-party API trading.")
+                print("To enable API trading, you may need to:")
+                print("  1. Ensure the account is 'thinkorswim enabled' on Schwab.com")
+                print("  2. Authorize this account for your Developer app during OAuth")
+                print("  3. Contact Schwab API support to enable trading for this account type")
+                print("\nFor now, you can trade manually at: https://www.schwab.com/")
+                print()
+                return
+
             raise PortfolioError(f"Order failed: {error_msg}")
 
         print()
