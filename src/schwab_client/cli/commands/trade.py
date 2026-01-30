@@ -33,9 +33,27 @@ def resolve_account_alias(account: str | None) -> str:
     return default_account
 
 
-def parse_trade_args(args: list[str], command: str) -> tuple[str, str, int]:
-    """Parse [ACCOUNT] SYMBOL QTY, using default account when omitted."""
-    if len(args) == 3:
+def parse_trade_args(
+    args: list[str], command: str, sell_all: bool = False
+) -> tuple[str, str, int | None]:
+    """Parse [ACCOUNT] SYMBOL QTY, using default account when omitted.
+
+    If sell_all is True, QTY can be omitted and None is returned for quantity.
+    """
+    if sell_all:
+        # For --all, QTY is not required: [ACCOUNT] SYMBOL
+        if len(args) == 2:
+            account, symbol = args
+            quantity_raw = None
+        elif len(args) == 1:
+            account = None
+            symbol = args[0]
+            quantity_raw = None
+        else:
+            raise ConfigError(
+                f"Usage: schwab {command} [ACCOUNT] SYMBOL --all"
+            )
+    elif len(args) == 3:
         account, symbol, quantity_raw = args
     elif len(args) == 2:
         account = None
@@ -48,12 +66,40 @@ def parse_trade_args(args: list[str], command: str) -> tuple[str, str, int]:
 
     account_alias = resolve_account_alias(account)
 
+    if quantity_raw is None:
+        return account_alias, symbol.upper(), None
+
     try:
         quantity = int(quantity_raw)
     except ValueError as exc:
         raise ConfigError("Quantity must be an integer.") from exc
 
     return account_alias, symbol.upper(), quantity
+
+
+def get_position_quantity(client, account_alias: str, symbol: str) -> float:
+    """Get the quantity of a position in an account.
+
+    Returns the full quantity (may be fractional).
+    Raises ConfigError if position not found.
+    """
+    account_number = secure_config.get_account_number(account_alias)
+    if not account_number:
+        raise ConfigError(f"Unknown account alias '{account_alias}'.")
+
+    last4 = account_number[-4:]
+    positions = client.get_positions(symbol=symbol)
+
+    for pos in positions:
+        # Match by account (contains last 4 digits) and symbol
+        account_str = pos.get("account", "")
+        if last4 in account_str and pos.get("symbol") == symbol:
+            return pos.get("quantity", 0)
+
+    raise ConfigError(
+        f"No position found for {symbol} in account '{account_alias}'. "
+        f"Use 'schwab positions --symbol {symbol}' to check."
+    )
 
 
 def parse_orders_account(args: list[str]) -> str:
@@ -195,6 +241,7 @@ def execute_trade(
     output_mode: str,
     auto_confirm: bool,
     non_interactive: bool,
+    sell_all: bool = False,
 ) -> None:
     """Execute a trade order (unified buy/sell logic).
 
@@ -208,7 +255,7 @@ def execute_trade(
     action_upper = action.upper()
 
     try:
-        account, symbol, quantity = parse_trade_args(args, command)
+        account, symbol, quantity = parse_trade_args(args, command, sell_all=sell_all)
         client = get_client()
 
         account_info = secure_config.get_account_info(account)
@@ -217,6 +264,12 @@ def execute_trade(
                 f"Unknown account alias '{account}'. "
                 "Use 'schwab accounts' to see available aliases."
             )
+
+        # Handle --all flag for sell
+        if sell_all and action == "sell":
+            position_qty = get_position_quantity(client, account, symbol)
+            quantity = position_qty
+            print(f"Selling all {quantity} shares of {symbol}")
 
         # Generate preview
         if action == "buy":
@@ -356,6 +409,7 @@ def cmd_sell(
     limit_price: float | None = None,
     dry_run: bool = False,
     live: bool = False,
+    sell_all: bool = False,
     output_mode: str = "text",
     auto_confirm: bool = False,
     non_interactive: bool = False,
@@ -370,6 +424,7 @@ def cmd_sell(
         output_mode=output_mode,
         auto_confirm=auto_confirm,
         non_interactive=non_interactive,
+        sell_all=sell_all,
     )
 
 

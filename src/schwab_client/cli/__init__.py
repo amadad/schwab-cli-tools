@@ -230,6 +230,7 @@ Examples:
     sell_parser.add_argument("--limit", type=float, help="Limit price")
     sell_parser.add_argument("--dry-run", action="store_true", help="Preview only")
     sell_parser.add_argument("--live", action="store_true", help="Enable live trading for this command")
+    sell_parser.add_argument("--all", action="store_true", dest="sell_all", help="Sell entire position")
     sell_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
 
     orders_parser = subparsers.add_parser(
@@ -330,6 +331,7 @@ def main(args: list | None = None) -> None:
             limit_price=getattr(parsed, "limit", None),
             dry_run=getattr(parsed, "dry_run", False),
             live=getattr(parsed, "live", False),
+            sell_all=getattr(parsed, "sell_all", False),
             output_mode=output_mode,
             auto_confirm=getattr(parsed, "yes", False),
             non_interactive=non_interactive,
