@@ -50,6 +50,11 @@ def parse_args() -> argparse.Namespace:
         help="Re-authenticate even if a valid token exists.",
     )
     parser.add_argument(
+        "--manual",
+        action="store_true",
+        help="Use manual flow for headless/SSH (copy-paste URL).",
+    )
+    parser.add_argument(
         "--interactive",
         action="store_true",
         help="Require ENTER before opening the browser.",
@@ -103,6 +108,15 @@ def authenticate_market_data(args: argparse.Namespace | None = None):
         else:
             print("Re-authenticating (forced).")
 
+    # Use manual flow if requested (for headless/SSH)
+    if args.manual:
+        return authenticate_market_data_manual(
+            api_key=api_key,
+            app_secret=app_secret,
+            callback_url=callback_url,
+            manager=manager,
+        )
+
     print("Opening browser for Schwab login...")
     print("Complete the login and authorize the application.\n")
 
@@ -118,6 +132,77 @@ def authenticate_market_data(args: argparse.Namespace | None = None):
         )
 
         print("\nAuthentication successful!")
+        print(f"Tokens saved to {MARKET_TOKEN_PATH}")
+        token_info = manager.get_token_info()
+        if token_info.get("expires"):
+            print(
+                "Token expires: "
+                f"{token_info['expires']} "
+                f"({token_info.get('expires_in_days', 0)} days)"
+            )
+
+        # Test with a simple quote request
+        print("\nTesting market data access...")
+        response = client.get_quote("$SPX")
+        if response.status_code == 200:
+            print("Market data API working!")
+        else:
+            print(f"Warning: Quote request returned {response.status_code}")
+
+        return client
+
+    except Exception as e:
+        print(f"\nAuthentication failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def authenticate_market_data_manual(
+    api_key: str,
+    app_secret: str,
+    callback_url: str,
+    manager: TokenManager,
+):
+    """
+    Run manual authentication flow for headless/remote environments.
+
+    This flow prints a URL that you can open on ANY browser (even a different machine),
+    then prompts you to paste the callback URL after authorization.
+
+    Use this when:
+    - Running on a headless server
+    - Running remotely via SSH
+    - Running in a container/cloud environment
+    """
+    print()
+    print("=" * 60)
+    print("MANUAL AUTHENTICATION FLOW")
+    print("=" * 60)
+    print()
+    print("This flow works on headless/remote machines.")
+    print()
+    print("Steps:")
+    print("  1. Copy the URL printed below")
+    print("  2. Open it in ANY browser (local machine, phone, etc.)")
+    print("  3. Log into Schwab and authorize the app")
+    print()
+    print("  4. Your browser will show 'Can't connect to server' or similar")
+    print("     THIS IS EXPECTED - don't worry!")
+    print()
+    print(f"  5. Copy the FULL URL from your browser's address bar")
+    print(f"     (starts with {callback_url}/?code=...)")
+    print("  6. Paste it back here")
+    print()
+
+    try:
+        client = auth.client_from_manual_flow(
+            api_key=api_key,
+            app_secret=app_secret,
+            callback_url=callback_url,
+            token_path=str(MARKET_TOKEN_PATH),
+        )
+
+        print()
+        print("Authentication successful!")
         print(f"Tokens saved to {MARKET_TOKEN_PATH}")
         token_info = manager.get_token_info()
         if token_info.get("expires"):

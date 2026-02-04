@@ -14,13 +14,15 @@ mkdir -p tokens private
 ## Auth
 
 ```bash
-uv run schwab-auth            # Opens browser for OAuth
-uv run schwab-auth --manual   # For headless/SSH (copy-paste URL flow)
-uv run schwab-market-auth     # Market data API
+uv run schwab-auth               # Opens browser for OAuth
+uv run schwab-auth --manual      # For headless/SSH (copy-paste URL flow)
+uv run schwab-market-auth        # Market data API (opens browser)
+uv run schwab-market-auth --manual  # For headless/SSH (copy-paste URL flow)
 ```
 
 The `--manual` flag prints a URL you can open on any browser (even a different machine),
 then prompts you to paste the callback URL. Use this for headless servers or SSH sessions.
+Both auth commands support `--manual`.
 
 ### thinkorswim Enablement (Required for Trading)
 

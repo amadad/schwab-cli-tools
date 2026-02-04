@@ -22,9 +22,10 @@ mkdir -p tokens private
 ## Authentication
 
 ```bash
-uv run schwab-auth          # Portfolio API (opens browser)
-uv run schwab-auth --manual # For headless/remote machines (copy-paste flow)
-uv run schwab-market-auth   # Market data API
+uv run schwab-auth               # Portfolio API (opens browser)
+uv run schwab-auth --manual      # For headless/remote machines (copy-paste flow)
+uv run schwab-market-auth        # Market data API (opens browser)
+uv run schwab-market-auth --manual  # For headless/remote machines (copy-paste flow)
 ```
 
 ### thinkorswim Enablement (Required for Trading)
@@ -42,7 +43,8 @@ Without thinkorswim enablement, orders will be rejected with "No trades are curr
 Read-only access (positions, balances, quotes) works without this step.
 
 The `--manual` flag is for headless servers or SSH sessions where a browser can't open
-locally. It prints a URL you can open on any device, then prompts for the callback URL.
+locally. It prints a URL you can open on any device (phone, laptop, etc.), then prompts
+you to paste the callback URL. Both auth commands support this flag.
 
 Market commands (`vix`, `indices`, `sectors`, `market`, `movers`, `futures`) require
 the market auth flow. Tokens are stored under `~/.schwab-cli-tools/tokens` by default.
