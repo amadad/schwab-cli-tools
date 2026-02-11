@@ -1,6 +1,6 @@
 """Integration tests for Schwab API client wrapper"""
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -219,3 +219,52 @@ class TestSchwabClientWrapper:
 
         assert account is not None
         mock_raw_client.get_account.assert_called_once_with("ABC123")
+
+    @patch("src.schwab_client.client.secure_config")
+    def test_buy_market_dry_run(self, mock_config, wrapper):
+        """Test buy_market dry-run preview payload."""
+        mock_config.get_account_number.return_value = "12345678"
+        account_info = Mock()
+        account_info.label = "Trading"
+        mock_config.get_account_info.return_value = account_info
+        wrapper.get_account_hash = Mock(return_value="ABC123")
+
+        preview = wrapper.buy_market("acct_trading", "aapl", 10, dry_run=True)
+
+        assert preview["dry_run"] is True
+        assert preview["action"] == "BUY"
+        assert preview["order_type"] == "MARKET"
+        assert preview["symbol"] == "AAPL"
+        assert preview["quantity"] == 10
+        assert preview["account"] == "Trading"
+        assert preview["account_number_masked"] == "...5678"
+        assert "limit_price" not in preview
+
+    @patch("src.schwab_client.client.secure_config")
+    def test_sell_limit_dry_run_includes_limit_price(self, mock_config, wrapper):
+        """Test sell_limit dry-run includes limit price and expected metadata."""
+        mock_config.get_account_number.return_value = "12345678"
+        account_info = Mock()
+        account_info.label = "Trading"
+        mock_config.get_account_info.return_value = account_info
+        wrapper.get_account_hash = Mock(return_value="ABC123")
+
+        preview = wrapper.sell_limit("acct_trading", "msft", 5, 320.5, dry_run=True)
+
+        assert preview["dry_run"] is True
+        assert preview["action"] == "SELL"
+        assert preview["order_type"] == "LIMIT"
+        assert preview["symbol"] == "MSFT"
+        assert preview["quantity"] == 5
+        assert preview["limit_price"] == 320.5
+        assert preview["account"] == "Trading"
+        assert preview["account_number_masked"] == "...5678"
+
+    @patch("src.schwab_client.client.secure_config")
+    def test_cancel_order_returns_unknown_account_error(self, mock_config, wrapper):
+        """Test cancel_order keeps unknown-account error behavior."""
+        mock_config.get_account_number.return_value = None
+
+        result = wrapper.cancel_order("missing_alias", "123")
+
+        assert result == {"success": False, "error": "Unknown account alias: missing_alias"}

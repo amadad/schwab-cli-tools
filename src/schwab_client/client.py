@@ -10,7 +10,7 @@ Wraps the official schwab-py client to provide:
 """
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from schwab.orders.equities import (
     equity_buy_limit,
@@ -370,6 +370,85 @@ class SchwabClientWrapper:
             logger.warning(f"Could not verify order status: {e}")
             return None
 
+    def _resolve_account_for_trade(self, account_alias: str) -> dict[str, Any]:
+        """Resolve account alias to account details used by order methods."""
+        account_number = secure_config.get_account_number(account_alias)
+        if not account_number:
+            return {"success": False, "error": f"Unknown account alias: {account_alias}"}
+
+        account_hash = self.get_account_hash(account_number)
+        if not account_hash:
+            return {"success": False, "error": f"Could not get hash for account: {account_alias}"}
+
+        account_info = secure_config.get_account_info(account_alias)
+        return {
+            "success": True,
+            "account_hash": account_hash,
+            "account_number": account_number,
+            "account_label": account_info.label if account_info else account_alias,
+        }
+
+    def _build_equity_order(
+        self,
+        *,
+        action: Literal["BUY", "SELL"],
+        order_type: Literal["MARKET", "LIMIT"],
+        symbol: str,
+        quantity: int,
+        limit_price: float | None = None,
+    ) -> dict[str, Any]:
+        """Build an equity market or limit order payload."""
+        symbol_upper = symbol.upper()
+
+        if order_type == "MARKET":
+            builder = equity_buy_market if action == "BUY" else equity_sell_market
+            return builder(symbol_upper, quantity).build()
+
+        builder = equity_buy_limit if action == "BUY" else equity_sell_limit
+        return builder(symbol_upper, quantity, str(limit_price)).build()
+
+    def _submit_equity_order(
+        self,
+        *,
+        account_alias: str,
+        symbol: str,
+        quantity: int,
+        action: Literal["BUY", "SELL"],
+        order_type: Literal["MARKET", "LIMIT"],
+        limit_price: float | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Build and place/preview an equity order."""
+        account = self._resolve_account_for_trade(account_alias)
+        if not account.get("success"):
+            return {"success": False, "error": account["error"]}
+
+        symbol_upper = symbol.upper()
+        order = self._build_equity_order(
+            action=action,
+            order_type=order_type,
+            symbol=symbol_upper,
+            quantity=quantity,
+            limit_price=limit_price,
+        )
+
+        if dry_run:
+            preview = {
+                "dry_run": True,
+                "action": action,
+                "order_type": order_type,
+                "symbol": symbol_upper,
+                "quantity": quantity,
+                "account": account["account_label"],
+                "account_number_masked": f"...{account['account_number'][-4:]}",
+                "order": order,
+            }
+            if order_type == "LIMIT":
+                preview["limit_price"] = limit_price
+            return preview
+
+        return self.place_order(account["account_hash"], order)
+
     def buy_market(
         self,
         account_alias: str,
@@ -389,33 +468,14 @@ class SchwabClientWrapper:
         Returns:
             Order result or preview
         """
-        # Resolve account
-        account_number = secure_config.get_account_number(account_alias)
-        if not account_number:
-            return {"success": False, "error": f"Unknown account alias: {account_alias}"}
-
-        account_hash = self.get_account_hash(account_number)
-        if not account_hash:
-            return {"success": False, "error": f"Could not get hash for account: {account_alias}"}
-
-        account_info = secure_config.get_account_info(account_alias)
-
-        # Build order
-        order = equity_buy_market(symbol.upper(), quantity).build()
-
-        if dry_run:
-            return {
-                "dry_run": True,
-                "action": "BUY",
-                "order_type": "MARKET",
-                "symbol": symbol.upper(),
-                "quantity": quantity,
-                "account": account_info.label if account_info else account_alias,
-                "account_number_masked": f"...{account_number[-4:]}",
-                "order": order,
-            }
-
-        return self.place_order(account_hash, order)
+        return self._submit_equity_order(
+            account_alias=account_alias,
+            symbol=symbol,
+            quantity=quantity,
+            action="BUY",
+            order_type="MARKET",
+            dry_run=dry_run,
+        )
 
     def sell_market(
         self,
@@ -436,33 +496,14 @@ class SchwabClientWrapper:
         Returns:
             Order result or preview
         """
-        # Resolve account
-        account_number = secure_config.get_account_number(account_alias)
-        if not account_number:
-            return {"success": False, "error": f"Unknown account alias: {account_alias}"}
-
-        account_hash = self.get_account_hash(account_number)
-        if not account_hash:
-            return {"success": False, "error": f"Could not get hash for account: {account_alias}"}
-
-        account_info = secure_config.get_account_info(account_alias)
-
-        # Build order
-        order = equity_sell_market(symbol.upper(), quantity).build()
-
-        if dry_run:
-            return {
-                "dry_run": True,
-                "action": "SELL",
-                "order_type": "MARKET",
-                "symbol": symbol.upper(),
-                "quantity": quantity,
-                "account": account_info.label if account_info else account_alias,
-                "account_number_masked": f"...{account_number[-4:]}",
-                "order": order,
-            }
-
-        return self.place_order(account_hash, order)
+        return self._submit_equity_order(
+            account_alias=account_alias,
+            symbol=symbol,
+            quantity=quantity,
+            action="SELL",
+            order_type="MARKET",
+            dry_run=dry_run,
+        )
 
     def buy_limit(
         self,
@@ -485,34 +526,15 @@ class SchwabClientWrapper:
         Returns:
             Order result or preview
         """
-        # Resolve account
-        account_number = secure_config.get_account_number(account_alias)
-        if not account_number:
-            return {"success": False, "error": f"Unknown account alias: {account_alias}"}
-
-        account_hash = self.get_account_hash(account_number)
-        if not account_hash:
-            return {"success": False, "error": f"Could not get hash for account: {account_alias}"}
-
-        account_info = secure_config.get_account_info(account_alias)
-
-        # Build order (price as string to avoid deprecation warning)
-        order = equity_buy_limit(symbol.upper(), quantity, str(limit_price)).build()
-
-        if dry_run:
-            return {
-                "dry_run": True,
-                "action": "BUY",
-                "order_type": "LIMIT",
-                "symbol": symbol.upper(),
-                "quantity": quantity,
-                "limit_price": limit_price,
-                "account": account_info.label if account_info else account_alias,
-                "account_number_masked": f"...{account_number[-4:]}",
-                "order": order,
-            }
-
-        return self.place_order(account_hash, order)
+        return self._submit_equity_order(
+            account_alias=account_alias,
+            symbol=symbol,
+            quantity=quantity,
+            action="BUY",
+            order_type="LIMIT",
+            limit_price=limit_price,
+            dry_run=dry_run,
+        )
 
     def sell_limit(
         self,
@@ -535,34 +557,15 @@ class SchwabClientWrapper:
         Returns:
             Order result or preview
         """
-        # Resolve account
-        account_number = secure_config.get_account_number(account_alias)
-        if not account_number:
-            return {"success": False, "error": f"Unknown account alias: {account_alias}"}
-
-        account_hash = self.get_account_hash(account_number)
-        if not account_hash:
-            return {"success": False, "error": f"Could not get hash for account: {account_alias}"}
-
-        account_info = secure_config.get_account_info(account_alias)
-
-        # Build order (price as string to avoid deprecation warning)
-        order = equity_sell_limit(symbol.upper(), quantity, str(limit_price)).build()
-
-        if dry_run:
-            return {
-                "dry_run": True,
-                "action": "SELL",
-                "order_type": "LIMIT",
-                "symbol": symbol.upper(),
-                "quantity": quantity,
-                "limit_price": limit_price,
-                "account": account_info.label if account_info else account_alias,
-                "account_number_masked": f"...{account_number[-4:]}",
-                "order": order,
-            }
-
-        return self.place_order(account_hash, order)
+        return self._submit_equity_order(
+            account_alias=account_alias,
+            symbol=symbol,
+            quantity=quantity,
+            action="SELL",
+            order_type="LIMIT",
+            limit_price=limit_price,
+            dry_run=dry_run,
+        )
 
     def cancel_order(self, account_alias: str, order_id: str) -> dict[str, Any]:
         """
@@ -575,15 +578,11 @@ class SchwabClientWrapper:
         Returns:
             Cancellation result
         """
-        account_number = secure_config.get_account_number(account_alias)
-        if not account_number:
-            return {"success": False, "error": f"Unknown account alias: {account_alias}"}
+        account = self._resolve_account_for_trade(account_alias)
+        if not account.get("success"):
+            return {"success": False, "error": account["error"]}
 
-        account_hash = self.get_account_hash(account_number)
-        if not account_hash:
-            return {"success": False, "error": f"Could not get hash for account: {account_alias}"}
-
-        response = self._client.cancel_order(order_id, account_hash)
+        response = self._client.cancel_order(order_id, account["account_hash"])
 
         if response.status_code == 200:
             return {"success": True, "order_id": order_id, "status": "cancelled"}

@@ -16,26 +16,18 @@ from pathlib import Path
 from dotenv import load_dotenv
 from schwab import auth
 
-from .auth import TokenManager
+from .auth import TokenManager, get_token_manager, resolve_token_path
 
 load_dotenv()
 
-DATA_DIR_ENV = "SCHWAB_CLI_DATA_DIR"
 MARKET_TOKEN_PATH_ENV = "SCHWAB_MARKET_TOKEN_PATH"
 
 
-def resolve_data_dir() -> Path:
-    env_dir = os.getenv(DATA_DIR_ENV)
-    if env_dir:
-        return Path(env_dir).expanduser()
-    return Path.home() / ".schwab-cli-tools"
-
-
 def resolve_market_token_path() -> Path:
-    env_path = os.getenv(MARKET_TOKEN_PATH_ENV)
-    if env_path:
-        return Path(env_path).expanduser()
-    return resolve_data_dir() / "tokens" / "schwab_market_token.json"
+    return resolve_token_path(
+        token_path_env=MARKET_TOKEN_PATH_ENV,
+        token_filename="schwab_market_token.json",
+    )
 
 
 # Separate token file for market data
@@ -95,7 +87,7 @@ def authenticate_market_data(args: argparse.Namespace | None = None):
     print("=" * 60)
     print(f"\nCallback URL: {callback_url}")
 
-    manager = TokenManager(token_path=MARKET_TOKEN_PATH)
+    manager = get_token_manager(token_path=MARKET_TOKEN_PATH)
     info = manager.get_token_info()
     if info.get("exists"):
         if not info.get("valid", True):

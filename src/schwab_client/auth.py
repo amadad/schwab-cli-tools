@@ -31,12 +31,15 @@ def resolve_data_dir() -> Path:
     return Path.home() / ".schwab-cli-tools"
 
 
-def resolve_token_path() -> Path:
-    """Resolve the token path for the portfolio API."""
-    env_path = os.getenv(TOKEN_PATH_ENV)
+def resolve_token_path(
+    token_path_env: str = TOKEN_PATH_ENV,
+    token_filename: str = "schwab_token.json",
+) -> Path:
+    """Resolve a token path, with env var override."""
+    env_path = os.getenv(token_path_env)
     if env_path:
         return Path(env_path).expanduser()
-    return resolve_data_dir() / "tokens" / "schwab_token.json"
+    return resolve_data_dir() / "tokens" / token_filename
 
 
 # Default token file location
@@ -206,6 +209,11 @@ class TokenManager:
         if self.token_path.exists():
             self.token_path.unlink()
             logger.info(f"Deleted token file: {self.token_path}")
+
+
+def get_token_manager(token_path: Path | None = None) -> TokenManager:
+    """Create a token manager using default portfolio token path when omitted."""
+    return TokenManager(token_path=token_path or DEFAULT_TOKEN_PATH)
 
 
 def get_authenticated_client(
