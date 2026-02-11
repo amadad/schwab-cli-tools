@@ -65,8 +65,6 @@ schwab balance             # Account balances
 schwab bal                 # Alias
 schwab allocation          # Allocation analysis
 schwab alloc               # Alias
-schwab performance         # Performance metrics
-schwab perf                # Alias
 ```
 
 ### Market Commands
@@ -127,7 +125,6 @@ schwab ord                                   # Alias
 | positions | pos |
 | balance | bal |
 | allocation | alloc |
-| performance | perf |
 | indices | idx |
 | sectors | sec |
 | market | mkt |

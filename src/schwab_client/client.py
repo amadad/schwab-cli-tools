@@ -23,7 +23,6 @@ from config.secure_account_config import secure_config
 from src.core.portfolio_service import (
     analyze_allocation,
     build_account_balances,
-    build_performance_report,
     build_portfolio_summary,
     build_positions,
 )
@@ -174,14 +173,6 @@ class SchwabClientWrapper:
         """Analyze portfolio allocation and concentration."""
         accounts = self.get_all_accounts_full()
         return analyze_allocation(accounts)
-
-    def get_portfolio_performance(self) -> dict[str, Any]:
-        """Get portfolio performance metrics."""
-        accounts = self.get_all_accounts_full()
-        return build_performance_report(
-            accounts,
-            MONEY_MARKET_SYMBOLS,
-        )
 
     def get_quote(self, symbol: str) -> dict[str, Any]:
         """

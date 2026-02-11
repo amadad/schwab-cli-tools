@@ -9,7 +9,6 @@ Commands:
     positions    Show positions
     balance      Show account balances
     allocation   Analyze allocation
-    performance  Show performance metrics
     vix          Show VIX data
     indices      Show market indices
     sectors      Show sector performance
@@ -53,7 +52,6 @@ from .commands import (
     cmd_market,
     cmd_movers,
     cmd_orders,
-    cmd_performance,
     cmd_portfolio,
     cmd_positions,
     cmd_report,
@@ -73,7 +71,6 @@ COMMAND_ALIASES = {
     "pos": "positions",
     "bal": "balance",
     "alloc": "allocation",
-    "perf": "performance",
     "idx": "indices",
     "sec": "sectors",
     "mkt": "market",
@@ -118,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="""
 Aliases:
   p=portfolio, pos=positions, bal=balance, alloc=allocation,
-  perf=performance, idx=indices, sec=sectors, mkt=market,
+  idx=indices, sec=sectors, mkt=market,
   mov=movers, fut=futures, fund=fundamentals, div=dividends,
   dr=doctor, snap=snapshot, ord=orders
 
@@ -155,10 +152,6 @@ Examples:
     subparsers.add_parser(
         "allocation", aliases=["alloc"], help="Analyze allocation", parents=[common_parser]
     )
-    subparsers.add_parser(
-        "performance", aliases=["perf"], help="Show performance", parents=[common_parser]
-    )
-
     # Market commands
     subparsers.add_parser("vix", help="Show VIX data", parents=[common_parser])
     subparsers.add_parser(
@@ -274,8 +267,6 @@ def main(args: list | None = None) -> None:
         cmd_balance(output_mode=output_mode)
     elif parsed.command == "allocation":
         cmd_allocation(output_mode=output_mode)
-    elif parsed.command == "performance":
-        cmd_performance(output_mode=output_mode)
     elif parsed.command == "vix":
         cmd_vix(output_mode=output_mode)
     elif parsed.command == "indices":

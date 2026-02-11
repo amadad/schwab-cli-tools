@@ -1,10 +1,8 @@
 """
-Portfolio commands: portfolio, positions, balance, allocation, performance.
+Portfolio commands: portfolio, positions, balance, allocation.
 """
 
 from typing import Any
-
-from config.secure_account_config import secure_config
 
 from ..context import get_client
 from ..output import (
@@ -16,25 +14,12 @@ from ..output import (
 )
 
 
-def get_account_display_name(account_number: str) -> str:
-    """Get friendly display name for account (centralized)."""
-    label = secure_config.get_account_label(account_number)
-    if label:
-        return label
-    if len(account_number) > 4:
-        return f"Account (...{account_number[-4:]})"
-    return f"Account ({account_number})"
-
-
-def sanitize_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Sanitize positions by masking account numbers."""
+def _strip_account_numbers(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove raw account numbers from position data."""
     sanitized = []
     for pos in positions:
         entry = dict(pos)
-        account_number = entry.pop("account_number", None)
-        if account_number:
-            entry["account_name"] = get_account_display_name(str(account_number))
-            entry["account_number_last4"] = str(account_number)[-4:]
+        entry.pop("account_number", None)
         sanitized.append(entry)
     return sanitized
 
@@ -51,7 +36,7 @@ def cmd_portfolio(
         summary = client.get_portfolio_summary()
 
         # Sanitize positions
-        summary["positions"] = sanitize_positions(summary.get("positions", []))
+        summary["positions"] = _strip_account_numbers(summary.get("positions", []))
 
         if output_mode == "json":
             print_json_response(command, data=summary)
@@ -77,9 +62,9 @@ def cmd_portfolio(
                 symbol = pos.get("symbol", "???")
                 qty = pos.get("quantity", 0)
                 value = pos.get("market_value", 0)
-                gain = pos.get("day_gain_percent", 0)
-                sign = "+" if gain >= 0 else ""
-                print(f"  {symbol:8s} {qty:>8.2f} {format_currency(value):>14s}  {sign}{gain:.2f}%")
+                pct = pos.get("percentage", 0)
+                account = pos.get("account", "")
+                print(f"  {symbol:8s} {qty:>8.2f} {format_currency(value):>14s}  {pct:>5.1f}%  [{account}]")
 
             if len(summary["positions"]) > 20:
                 print(f"  ... and {len(summary['positions']) - 20} more")
@@ -121,15 +106,12 @@ def cmd_positions(
                 sym = pos.get("symbol", "???")
                 qty = pos.get("quantity", 0)
                 value = pos.get("market_value", 0)
-                avg_cost = pos.get("average_cost", 0)
-                current = pos.get("current_price", 0)
-                gain_pct = pos.get("gain_percent", 0)
-                account = pos.get("account_name", "")
+                pct = pos.get("percentage_of_portfolio", 0)
+                account = pos.get("account", "")
 
-                sign = "+" if gain_pct >= 0 else ""
                 print(
-                    f"  {sym:8s} {qty:>8.2f} @ ${current:>8.2f}  "
-                    f"{format_currency(value):>12s}  {sign}{gain_pct:.2f}%  [{account}]"
+                    f"  {sym:8s} {qty:>8.2f}  "
+                    f"{format_currency(value):>12s}  {pct:>5.1f}%  [{account}]"
                 )
 
         print()
@@ -218,37 +200,3 @@ def cmd_allocation(*, output_mode: str = "text") -> None:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
-def cmd_performance(*, output_mode: str = "text") -> None:
-    """Show portfolio performance."""
-    command = "performance"
-    try:
-        client = get_client()
-        perf = client.get_portfolio_performance()
-
-        if output_mode == "json":
-            print_json_response(command, data=perf)
-            return
-
-        print(format_header("PORTFOLIO PERFORMANCE"))
-
-        print(f"\n  Total Value:    {format_currency(perf.get('total_value'))}")
-        print(f"  Day Change:     {format_currency(perf.get('day_change'))} ({format_percent(perf.get('day_change_percent'))})")
-
-        if perf.get("top_gainers"):
-            print("\n  TOP GAINERS:")
-            for g in perf["top_gainers"][:5]:
-                symbol = g.get("symbol", "???")
-                change = g.get("day_gain_percent", 0)
-                print(f"    {symbol:8s} +{change:.2f}%")
-
-        if perf.get("top_losers"):
-            print("\n  TOP LOSERS:")
-            for l in perf["top_losers"][:5]:
-                symbol = l.get("symbol", "???")
-                change = l.get("day_gain_percent", 0)
-                print(f"    {symbol:8s} {change:.2f}%")
-
-        print()
-
-    except Exception as exc:
-        handle_cli_error(exc, output_mode=output_mode, command=command)

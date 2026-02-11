@@ -1,7 +1,6 @@
 from src.core.portfolio_service import (
     analyze_allocation,
     build_account_balances,
-    build_performance_report,
     build_portfolio_summary,
     build_positions,
 )
@@ -93,10 +92,3 @@ def test_analyze_allocation_outputs_expected_keys():
     assert len(analysis["top_holdings_pct"]) >= 2
 
 
-def test_build_performance_report_excludes_money_markets():
-    accounts = _accounts_fixture()
-    report = build_performance_report(accounts, {"SWGXX"})
-
-    assert report["daily_change"] == 15
-    assert report["total_unrealized_pl"] == 50
-    assert all(winner["symbol"] != "SWGXX" for winner in report["winners"])
