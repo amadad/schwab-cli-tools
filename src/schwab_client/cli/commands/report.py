@@ -95,7 +95,6 @@ def cmd_report(
         performance = build_performance_report(
             accounts,
             MONEY_MARKET_SYMBOLS,
-            get_account_display_name,
         )
 
         report = {
@@ -136,12 +135,12 @@ def cmd_report(
             print(f"  Warnings:    {', '.join(warnings)}")
         print()
 
-        if performance.get("accounts"):
-            print(format_header("ACCOUNT PERFORMANCE"))
-            for acc in performance["accounts"]:
+        if balances:
+            print(format_header("ACCOUNT VALUES"))
+            for acc in balances:
                 print(
                     f"  {acc['account']}: {format_currency(acc['total_value'])}  "
-                    f"({format_currency(acc['day_pl'])} / {acc['day_pl_pct']:.2f}%)"
+                    f"(cash {format_currency(acc['cash_balance'])})"
                 )
             print()
 

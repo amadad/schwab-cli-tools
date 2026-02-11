@@ -225,23 +225,18 @@ def analyze_allocation(
 def build_performance_report(
     accounts: list[dict[str, Any]],
     money_market_symbols: set[str] | frozenset[str],
-    account_name_resolver: AccountNameResolver,
 ) -> dict[str, Any]:
     """Build portfolio performance metrics."""
     total_day_pl = 0.0
     total_unrealized_pl = 0.0
     total_value = 0.0
     position_performance: list[dict[str, Any]] = []
-    account_performance: list[dict[str, Any]] = []
 
     for account in accounts:
         sec_account = account.get("securitiesAccount", {})
         balances = sec_account.get("currentBalances", {})
-        acc_num = sec_account.get("accountNumber", "")
-        acc_value = balances.get("liquidationValue", 0)
-        total_value += acc_value
+        total_value += balances.get("liquidationValue", 0)
 
-        acc_day_pl = 0.0
         for pos in sec_account.get("positions", []):
             instrument = pos.get("instrument", {})
             symbol = instrument.get("symbol", "Unknown")
@@ -253,7 +248,6 @@ def build_performance_report(
             total_unrealized_pl += unrealized_pl
 
             if symbol != "Unknown" and symbol not in money_market_symbols:
-                acc_day_pl += day_pl
                 position_performance.append(
                     {
                         "symbol": symbol,
@@ -263,20 +257,6 @@ def build_performance_report(
                         "market_value": pos.get("marketValue", 0),
                     }
                 )
-
-        acc_yesterday_value = acc_value - acc_day_pl
-        acc_day_pl_pct = (
-            (acc_day_pl / acc_yesterday_value * 100) if acc_yesterday_value > 0 else 0
-        )
-
-        account_performance.append(
-            {
-                "account": account_name_resolver(acc_num),
-                "total_value": acc_value,
-                "day_pl": acc_day_pl,
-                "day_pl_pct": acc_day_pl_pct,
-            }
-        )
 
     position_performance.sort(key=lambda x: x["day_pl"], reverse=True)
 
@@ -288,13 +268,10 @@ def build_performance_report(
     yesterday_value = total_value - total_day_pl
     daily_change_pct = (total_day_pl / yesterday_value * 100) if yesterday_value > 0 else 0
 
-    account_performance.sort(key=lambda x: x["day_pl"])
-
     return {
         "daily_change": total_day_pl,
         "daily_change_pct": daily_change_pct,
         "total_unrealized_pl": total_unrealized_pl,
-        "accounts": account_performance,
         "winners": winners,
         "losers": losers,
     }
