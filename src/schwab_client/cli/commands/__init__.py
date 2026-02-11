@@ -14,7 +14,6 @@ from .market import (
 from .portfolio import (
     cmd_allocation,
     cmd_balance,
-    cmd_performance,
     cmd_portfolio,
     cmd_positions,
 )
@@ -27,7 +26,6 @@ __all__ = [
     "cmd_positions",
     "cmd_balance",
     "cmd_allocation",
-    "cmd_performance",
     # Market
     "cmd_vix",
     "cmd_indices",

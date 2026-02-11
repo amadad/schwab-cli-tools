@@ -39,10 +39,6 @@ def build_portfolio_summary(
                         "quantity": pos.get("longQuantity", 0),
                         "market_value": market_value,
                         "average_price": pos.get("averagePrice", 0),
-                        "unrealized_pl": pos.get("unrealizedProfitLoss", 0),
-                        "unrealized_pl_pct": pos.get("unrealizedProfitLossPercentage", 0),
-                        "day_pl": pos.get("currentDayProfitLoss", 0),
-                        "day_pl_pct": pos.get("currentDayProfitLossPercentage", 0),
                         "account": account_name_resolver(account_number),
                         "account_number": account_number,
                         "asset_type": instrument.get("assetType", "UNKNOWN"),
@@ -54,8 +50,6 @@ def build_portfolio_summary(
 
     all_positions.sort(key=lambda x: x["market_value"], reverse=True)
 
-    total_unrealized_pl = sum(pos.get("unrealized_pl", 0) for pos in all_positions)
-
     for pos in all_positions:
         pos["percentage"] = pos["market_value"] / total_value * 100 if total_value > 0 else 0
 
@@ -63,7 +57,6 @@ def build_portfolio_summary(
         "total_value": total_value,
         "total_cash": total_cash,
         "total_invested": total_value - total_cash,
-        "total_unrealized_pl": total_unrealized_pl,
         "cash_percentage": (total_cash / total_value * 100) if total_value > 0 else 0,
         "account_count": len(accounts),
         "position_count": len(all_positions),
@@ -107,8 +100,6 @@ def build_positions(
                     "quantity": quantity,
                     "market_value": market_value,
                     "cost_basis": avg_price * quantity,
-                    "unrealized_pl": pos.get("unrealizedProfitLoss", 0),
-                    "day_change": pos.get("currentDayProfitLoss", 0),
                     "percentage_of_portfolio": (
                         (market_value / total_portfolio_value * 100)
                         if total_portfolio_value > 0
@@ -219,59 +210,4 @@ def analyze_allocation(
         "by_asset_type": by_asset_type,
         "concentration_risks": concentration_risks,
         "top_holdings_pct": top_holdings_pct,
-    }
-
-
-def build_performance_report(
-    accounts: list[dict[str, Any]],
-    money_market_symbols: set[str] | frozenset[str],
-) -> dict[str, Any]:
-    """Build portfolio performance metrics."""
-    total_day_pl = 0.0
-    total_unrealized_pl = 0.0
-    total_value = 0.0
-    position_performance: list[dict[str, Any]] = []
-
-    for account in accounts:
-        sec_account = account.get("securitiesAccount", {})
-        balances = sec_account.get("currentBalances", {})
-        total_value += balances.get("liquidationValue", 0)
-
-        for pos in sec_account.get("positions", []):
-            instrument = pos.get("instrument", {})
-            symbol = instrument.get("symbol", "Unknown")
-
-            day_pl = pos.get("currentDayProfitLoss", 0)
-            unrealized_pl = pos.get("unrealizedProfitLoss", 0)
-
-            total_day_pl += day_pl
-            total_unrealized_pl += unrealized_pl
-
-            if symbol != "Unknown" and symbol not in money_market_symbols:
-                position_performance.append(
-                    {
-                        "symbol": symbol,
-                        "day_pl": day_pl,
-                        "day_pl_pct": pos.get("currentDayProfitLossPercentage", 0),
-                        "unrealized_pl": unrealized_pl,
-                        "market_value": pos.get("marketValue", 0),
-                    }
-                )
-
-    position_performance.sort(key=lambda x: x["day_pl"], reverse=True)
-
-    winners = [p for p in position_performance if p["day_pl"] > 0][:5]
-    losers = [p for p in position_performance if p["day_pl"] < 0]
-    losers.sort(key=lambda x: x["day_pl"])
-    losers = losers[:5]
-
-    yesterday_value = total_value - total_day_pl
-    daily_change_pct = (total_day_pl / yesterday_value * 100) if yesterday_value > 0 else 0
-
-    return {
-        "daily_change": total_day_pl,
-        "daily_change_pct": daily_change_pct,
-        "total_unrealized_pl": total_unrealized_pl,
-        "winners": winners,
-        "losers": losers,
     }

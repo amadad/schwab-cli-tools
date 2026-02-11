@@ -18,7 +18,6 @@ from src.core.market_service import (
 from src.core.portfolio_service import (
     analyze_allocation,
     build_account_balances,
-    build_performance_report,
     build_portfolio_summary,
 )
 
@@ -92,7 +91,6 @@ def cmd_report(
 
         balances = build_account_balances(accounts, get_account_display_name, MONEY_MARKET_SYMBOLS)
         allocation = analyze_allocation(accounts)
-        performance = build_performance_report(accounts, MONEY_MARKET_SYMBOLS)
 
         report = {
             "generated_at": timestamp.isoformat(),
@@ -100,7 +98,6 @@ def cmd_report(
                 "summary": summary,
                 "balances": balances,
                 "allocation": allocation,
-                "performance": performance,
             },
         }
 
@@ -131,6 +128,15 @@ def cmd_report(
         if warnings:
             print(f"  Warnings:    {', '.join(warnings)}")
         print()
+
+        if balances:
+            print(format_header("ACCOUNT VALUES"))
+            for acc in balances:
+                print(
+                    f"  {acc['account']}: {format_currency(acc['total_value'])}  "
+                    f"(cash {format_currency(acc['cash_balance'])})"
+                )
+            print()
 
     except Exception as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)

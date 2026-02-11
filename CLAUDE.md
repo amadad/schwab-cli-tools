@@ -71,7 +71,6 @@ response envelope.
 | `positions [--symbol]` | `pos` | Show positions |
 | `balance` | `bal` | Show account balances |
 | `allocation` | `alloc` | Analyze allocation |
-| `performance` | `perf` | Show performance metrics |
 | `vix` | | Show VIX data |
 | `indices` | `idx` | Show market indices |
 | `sectors` | `sec` | Show sector performance |
