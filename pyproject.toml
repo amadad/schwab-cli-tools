@@ -21,7 +21,6 @@ classifiers = [
 dependencies = [
     "httpx>=0.28.0",
     "python-dotenv>=1.2.1",
-    "requests>=2.32.5",
     "schwab-py>=1.5.1",
 ]
 
