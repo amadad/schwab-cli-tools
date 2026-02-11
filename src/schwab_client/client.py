@@ -178,7 +178,11 @@ class SchwabClientWrapper:
     def get_portfolio_performance(self) -> dict[str, Any]:
         """Get portfolio performance metrics."""
         accounts = self.get_all_accounts_full()
-        return build_performance_report(accounts, MONEY_MARKET_SYMBOLS)
+        return build_performance_report(
+            accounts,
+            MONEY_MARKET_SYMBOLS,
+            self._get_account_display_name,
+        )
 
     def get_quote(self, symbol: str) -> dict[str, Any]:
         """

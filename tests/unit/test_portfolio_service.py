@@ -95,8 +95,12 @@ def test_analyze_allocation_outputs_expected_keys():
 
 def test_build_performance_report_excludes_money_markets():
     accounts = _accounts_fixture()
-    report = build_performance_report(accounts, {"SWGXX"})
+    report = build_performance_report(accounts, {"SWGXX"}, _account_name)
 
     assert report["daily_change"] == 15
     assert report["total_unrealized_pl"] == 50
     assert all(winner["symbol"] != "SWGXX" for winner in report["winners"])
+
+    accounts_perf = {a["account"]: a for a in report["accounts"]}
+    assert accounts_perf["Account (...1111)"]["day_pl"] == 25
+    assert accounts_perf["Account (...2222)"]["day_pl"] == -10

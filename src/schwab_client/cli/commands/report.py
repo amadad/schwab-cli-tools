@@ -92,7 +92,11 @@ def cmd_report(
 
         balances = build_account_balances(accounts, get_account_display_name, MONEY_MARKET_SYMBOLS)
         allocation = analyze_allocation(accounts)
-        performance = build_performance_report(accounts, MONEY_MARKET_SYMBOLS)
+        performance = build_performance_report(
+            accounts,
+            MONEY_MARKET_SYMBOLS,
+            get_account_display_name,
+        )
 
         report = {
             "generated_at": timestamp.isoformat(),
@@ -131,6 +135,15 @@ def cmd_report(
         if warnings:
             print(f"  Warnings:    {', '.join(warnings)}")
         print()
+
+        if performance.get("accounts"):
+            print(format_header("ACCOUNT PERFORMANCE"))
+            for acc in performance["accounts"]:
+                print(
+                    f"  {acc['account']}: {format_currency(acc['total_value'])}  "
+                    f"({format_currency(acc['day_pl'])} / {acc['day_pl_pct']:.2f}%)"
+                )
+            print()
 
     except Exception as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
