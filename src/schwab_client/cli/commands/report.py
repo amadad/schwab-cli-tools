@@ -8,7 +8,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from config.secure_account_config import secure_config
+from src.core.errors import PortfolioError
 from src.core.market_service import (
     get_market_indices,
     get_market_signals,
@@ -138,7 +141,7 @@ def cmd_report(
                 )
             print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
@@ -257,5 +260,5 @@ def cmd_snapshot(*, output_mode: str = "text") -> None:
 
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)

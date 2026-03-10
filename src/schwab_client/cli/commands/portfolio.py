@@ -4,6 +4,10 @@ Portfolio commands: portfolio, positions, balance, allocation.
 
 from typing import Any
 
+import httpx
+
+from src.core.errors import PortfolioError
+
 from ..context import get_client
 from ..output import (
     format_currency,
@@ -71,7 +75,7 @@ def cmd_portfolio(
 
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
@@ -116,7 +120,7 @@ def cmd_positions(
 
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
@@ -154,7 +158,7 @@ def cmd_balance(*, output_mode: str = "text") -> None:
 
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
@@ -196,7 +200,7 @@ def cmd_allocation(*, output_mode: str = "text") -> None:
 
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 

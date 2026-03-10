@@ -87,6 +87,7 @@ class SecureAccountConfig:
             self.account_mappings = {}
             self.categories = {
                 "personal": [],
+                "trading": [],
                 "inherited": [],
                 "retirement": [],
                 "education": [],
@@ -100,6 +101,8 @@ class SecureAccountConfig:
                     logger.warning(f"Skipping account '{alias}': missing account_number")
                     continue
 
+                category = account_data.get("category", "personal")
+
                 # Create AccountInfo object
                 account_info = AccountInfo(
                     alias=alias,
@@ -108,7 +111,7 @@ class SecureAccountConfig:
                     label=account_data.get("label", alias),
                     account_type=account_data.get("type", "other"),
                     tax_status=account_data.get("tax_status", "taxable"),
-                    category=account_data.get("category", "personal"),
+                    category=category,
                     notes=account_data.get("notes", ""),
                     distribution_deadline=account_data.get("distribution_deadline"),
                     beneficiary=account_data.get("beneficiary"),
@@ -118,7 +121,6 @@ class SecureAccountConfig:
                 self.account_mappings[alias] = account_number
 
                 # Add to category
-                category = account_data.get("category", "personal")
                 if category in self.categories:
                     self.categories[category].append(account_number)
 

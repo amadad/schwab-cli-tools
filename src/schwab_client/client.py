@@ -10,7 +10,11 @@ Wraps the official schwab-py client to provide:
 """
 
 import logging
+import time
+from functools import wraps
 from typing import Any, Literal
+
+import httpx
 
 from schwab.orders.equities import (
     equity_buy_limit,
@@ -28,6 +32,30 @@ from src.core.portfolio_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _retry_on_transient_error(max_retries: int = 2, backoff_base: float = 1.0):
+    """Retry on transient HTTP errors (429, 500, 502, 503, 504) with exponential backoff."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exc = None
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except httpx.HTTPStatusError as exc:
+                    status = exc.response.status_code
+                    if status in (429, 500, 502, 503, 504) and attempt < max_retries:
+                        wait = backoff_base * (2 ** attempt)
+                        logger.warning(f"Transient error {status}, retrying in {wait:.1f}s (attempt {attempt + 1}/{max_retries})")
+                        time.sleep(wait)
+                        last_exc = exc
+                    else:
+                        raise
+            raise last_exc
+        return wrapper
+    return decorator
+
 
 # Money market fund symbols treated as cash equivalents
 MONEY_MARKET_SYMBOLS = frozenset({"SWGXX", "SWVXX", "SNOXX", "SNSXX", "SNVXX"})
@@ -68,6 +96,7 @@ class SchwabClientWrapper:
         """Access underlying schwab-py client for advanced operations"""
         return self._client
 
+    @_retry_on_transient_error()
     def get_account_numbers(self) -> list[dict[str, str]]:
         """
         Get account numbers with hash values.
@@ -100,6 +129,7 @@ class SchwabClientWrapper:
             self.get_account_numbers()
         return self._account_hashes.get(account_number) if self._account_hashes else None
 
+    @_retry_on_transient_error()
     def get_account(self, account_hash: str, include_positions: bool = True) -> dict[str, Any]:
         """
         Get account details by hash value.
@@ -121,6 +151,7 @@ class SchwabClientWrapper:
         response.raise_for_status()
         return response.json()
 
+    @_retry_on_transient_error()
     def get_all_accounts_full(self) -> list[dict[str, Any]]:
         """
         Get all accounts with positions.
@@ -174,6 +205,7 @@ class SchwabClientWrapper:
         accounts = self.get_all_accounts_full()
         return analyze_allocation(accounts)
 
+    @_retry_on_transient_error()
     def get_quote(self, symbol: str) -> dict[str, Any]:
         """
         Get quote for a single symbol.
@@ -188,6 +220,7 @@ class SchwabClientWrapper:
         response.raise_for_status()
         return response.json()
 
+    @_retry_on_transient_error()
     def get_quotes(self, symbols: list[str]) -> dict[str, Any]:
         """
         Get quotes for multiple symbols.
@@ -202,6 +235,7 @@ class SchwabClientWrapper:
         response.raise_for_status()
         return response.json()
 
+    @_retry_on_transient_error()
     def get_price_history_daily(self, symbol: str) -> dict[str, Any]:
         """
         Get daily price history for a symbol.
@@ -216,6 +250,7 @@ class SchwabClientWrapper:
         response.raise_for_status()
         return response.json()
 
+    @_retry_on_transient_error()
     def get_orders(self, account_hash: str) -> list[dict[str, Any]]:
         """
         Get orders for an account.
@@ -246,6 +281,7 @@ class SchwabClientWrapper:
             return response.json()
         return None
 
+    @_retry_on_transient_error()
     def get_transactions(
         self,
         account_hash: str,
@@ -386,20 +422,57 @@ class SchwabClientWrapper:
         self,
         *,
         action: Literal["BUY", "SELL"],
-        order_type: Literal["MARKET", "LIMIT"],
+        order_type: Literal["MARKET", "LIMIT", "STOP", "STOP_LIMIT", "TRAILING_STOP"],
         symbol: str,
         quantity: int,
         limit_price: float | None = None,
+        stop_price: float | None = None,
+        trailing_stop_percent: float | None = None,
     ) -> dict[str, Any]:
-        """Build an equity market or limit order payload."""
+        """Build an equity order payload (market, limit, stop, stop-limit, trailing stop)."""
         symbol_upper = symbol.upper()
+        instruction = "BUY" if action == "BUY" else "SELL"
 
         if order_type == "MARKET":
             builder = equity_buy_market if action == "BUY" else equity_sell_market
             return builder(symbol_upper, quantity).build()
 
-        builder = equity_buy_limit if action == "BUY" else equity_sell_limit
-        return builder(symbol_upper, quantity, str(limit_price)).build()
+        if order_type == "LIMIT":
+            builder = equity_buy_limit if action == "BUY" else equity_sell_limit
+            return builder(symbol_upper, quantity, str(limit_price)).build()
+
+        # For stop, stop-limit, and trailing stop, build order dict directly
+        # since schwab-py doesn't have dedicated builders for these
+        order: dict[str, Any] = {
+            "orderStrategyType": "SINGLE",
+            "session": "NORMAL",
+            "duration": "GOOD_TILL_CANCEL",
+            "orderLegCollection": [
+                {
+                    "instruction": instruction,
+                    "quantity": quantity,
+                    "instrument": {
+                        "symbol": symbol_upper,
+                        "assetType": "EQUITY",
+                    },
+                }
+            ],
+        }
+
+        if order_type == "STOP":
+            order["orderType"] = "STOP"
+            order["stopPrice"] = str(stop_price)
+        elif order_type == "STOP_LIMIT":
+            order["orderType"] = "STOP_LIMIT"
+            order["stopPrice"] = str(stop_price)
+            order["price"] = str(limit_price)
+        elif order_type == "TRAILING_STOP":
+            order["orderType"] = "TRAILING_STOP"
+            order["stopPriceLinkBasis"] = "MARK"
+            order["stopPriceLinkType"] = "PERCENT"
+            order["stopPriceOffset"] = str(trailing_stop_percent)
+
+        return order
 
     def _submit_equity_order(
         self,
@@ -408,8 +481,10 @@ class SchwabClientWrapper:
         symbol: str,
         quantity: int,
         action: Literal["BUY", "SELL"],
-        order_type: Literal["MARKET", "LIMIT"],
+        order_type: Literal["MARKET", "LIMIT", "STOP", "STOP_LIMIT", "TRAILING_STOP"],
         limit_price: float | None = None,
+        stop_price: float | None = None,
+        trailing_stop_percent: float | None = None,
         dry_run: bool = False,
     ) -> dict[str, Any]:
         """Build and place/preview an equity order."""
@@ -424,6 +499,8 @@ class SchwabClientWrapper:
             symbol=symbol_upper,
             quantity=quantity,
             limit_price=limit_price,
+            stop_price=stop_price,
+            trailing_stop_percent=trailing_stop_percent,
         )
 
         if dry_run:
@@ -437,8 +514,12 @@ class SchwabClientWrapper:
                 "account_number_masked": f"...{account['account_number'][-4:]}",
                 "order": order,
             }
-            if order_type == "LIMIT":
+            if limit_price is not None:
                 preview["limit_price"] = limit_price
+            if stop_price is not None:
+                preview["stop_price"] = stop_price
+            if trailing_stop_percent is not None:
+                preview["trailing_stop_percent"] = trailing_stop_percent
             return preview
 
         return self.place_order(account["account_hash"], order)
@@ -558,6 +639,65 @@ class SchwabClientWrapper:
             action="SELL",
             order_type="LIMIT",
             limit_price=limit_price,
+            dry_run=dry_run,
+        )
+
+    def sell_stop(
+        self,
+        account_alias: str,
+        symbol: str,
+        quantity: int,
+        stop_price: float,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Place a stop sell order (triggers market sell when price drops to stop)."""
+        return self._submit_equity_order(
+            account_alias=account_alias,
+            symbol=symbol,
+            quantity=quantity,
+            action="SELL",
+            order_type="STOP",
+            stop_price=stop_price,
+            dry_run=dry_run,
+        )
+
+    def sell_stop_limit(
+        self,
+        account_alias: str,
+        symbol: str,
+        quantity: int,
+        stop_price: float,
+        limit_price: float,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Place a stop-limit sell order."""
+        return self._submit_equity_order(
+            account_alias=account_alias,
+            symbol=symbol,
+            quantity=quantity,
+            action="SELL",
+            order_type="STOP_LIMIT",
+            stop_price=stop_price,
+            limit_price=limit_price,
+            dry_run=dry_run,
+        )
+
+    def sell_trailing_stop(
+        self,
+        account_alias: str,
+        symbol: str,
+        quantity: int,
+        trailing_stop_percent: float,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Place a trailing stop sell order (percentage from mark)."""
+        return self._submit_equity_order(
+            account_alias=account_alias,
+            symbol=symbol,
+            quantity=quantity,
+            action="SELL",
+            order_type="TRAILING_STOP",
+            trailing_stop_percent=trailing_stop_percent,
             dry_run=dry_run,
         )
 

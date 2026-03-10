@@ -17,6 +17,7 @@ Commands:
     futures      Show pre-market futures
     fundamentals Show symbol fundamentals
     dividends    Show dividends
+    regime       Show market regime (risk-on/off)
     auth         Check authentication
     doctor       Run diagnostics
     accounts     List accounts
@@ -48,11 +49,16 @@ from .commands import (
     cmd_doctor,
     cmd_fundamentals,
     cmd_futures,
+    cmd_hours,
     cmd_indices,
+    cmd_iv,
+    cmd_lynch,
     cmd_market,
+    cmd_score,
     cmd_movers,
     cmd_orders,
     cmd_portfolio,
+    cmd_regime,
     cmd_positions,
     cmd_report,
     cmd_sectors,
@@ -78,6 +84,8 @@ COMMAND_ALIASES = {
     "fut": "futures",
     "fund": "fundamentals",
     "div": "dividends",
+    "ly": "lynch",
+    "reg": "regime",
     "dr": "doctor",
     "snap": "snapshot",
     "ord": "orders",
@@ -170,21 +178,48 @@ Examples:
     movers_parser.add_argument("--gainers", action="store_true", help="Gainers only")
     movers_parser.add_argument("--losers", action="store_true", help="Losers only")
     movers_parser.add_argument("--count", type=int, default=5, help="Number to show")
+    movers_parser.add_argument(
+        "--index", default="SPX", choices=["SPX", "NASDAQ", "NYSE", "DJI"],
+        help="Index to show movers for (default: SPX)"
+    )
 
     subparsers.add_parser(
         "futures", aliases=["fut"], help="Show pre-market futures", parents=[common_parser]
     )
+
+    hours_parser = subparsers.add_parser(
+        "hours", help="Check market hours", parents=[common_parser]
+    )
+    hours_parser.add_argument("--date", help="Date to check (YYYY-MM-DD)")
 
     fundamentals_parser = subparsers.add_parser(
         "fundamentals", aliases=["fund"], help="Show fundamentals", parents=[common_parser]
     )
     fundamentals_parser.add_argument("symbol", help="Symbol to look up")
 
+    iv_parser = subparsers.add_parser(
+        "iv", help="Show implied volatility", parents=[common_parser]
+    )
+    iv_parser.add_argument("symbol", help="Symbol to look up")
+
     dividends_parser = subparsers.add_parser(
         "dividends", aliases=["div"], help="Show dividends", parents=[common_parser]
     )
     dividends_parser.add_argument("--days", type=int, default=30, help="Days to look back")
     dividends_parser.add_argument("--upcoming", action="store_true", help="Show upcoming ex-dates")
+
+    subparsers.add_parser(
+        "lynch", aliases=["ly"], help="Check Lynch sell signals", parents=[common_parser]
+    )
+
+    subparsers.add_parser(
+        "regime", aliases=["reg"], help="Show market regime (risk-on/off)", parents=[common_parser]
+    )
+
+    score_parser = subparsers.add_parser(
+        "score", help="Score a stock (quality framework)", parents=[common_parser]
+    )
+    score_parser.add_argument("symbol", help="Symbol to score")
 
     # Admin commands
     subparsers.add_parser("auth", help="Check authentication", parents=[common_parser])
@@ -221,6 +256,8 @@ Examples:
         "args", nargs="*", metavar="[ACCOUNT] SYMBOL QTY", help="Trade arguments"
     )
     sell_parser.add_argument("--limit", type=float, help="Limit price")
+    sell_parser.add_argument("--stop", type=float, help="Stop price (triggers sell when reached)")
+    sell_parser.add_argument("--trailing-stop", type=float, dest="trailing_stop", metavar="PCT", help="Trailing stop percentage from mark")
     sell_parser.add_argument("--dry-run", action="store_true", help="Preview only")
     sell_parser.add_argument("--live", action="store_true", help="Enable live trading for this command")
     sell_parser.add_argument("--all", action="store_true", dest="sell_all", help="Sell entire position")
@@ -281,17 +318,28 @@ def main(args: list | None = None) -> None:
             gainers_only=getattr(parsed, "gainers", False),
             losers_only=getattr(parsed, "losers", False),
             count=getattr(parsed, "count", 5),
+            index=getattr(parsed, "index", "SPX"),
         )
     elif parsed.command == "futures":
         cmd_futures(output_mode=output_mode)
+    elif parsed.command == "hours":
+        cmd_hours(date=getattr(parsed, "date", None), output_mode=output_mode)
     elif parsed.command == "fundamentals":
         cmd_fundamentals(parsed.symbol, output_mode=output_mode)
+    elif parsed.command == "iv":
+        cmd_iv(parsed.symbol, output_mode=output_mode)
     elif parsed.command == "dividends":
         cmd_dividends(
             days=getattr(parsed, "days", 30),
             output_mode=output_mode,
             upcoming=getattr(parsed, "upcoming", False),
         )
+    elif parsed.command == "lynch":
+        cmd_lynch(output_mode=output_mode)
+    elif parsed.command == "regime":
+        cmd_regime(output_mode=output_mode)
+    elif parsed.command == "score":
+        cmd_score(parsed.symbol, output_mode=output_mode)
     elif parsed.command == "auth":
         cmd_auth(output_mode=output_mode)
     elif parsed.command == "doctor":
@@ -320,6 +368,8 @@ def main(args: list | None = None) -> None:
         cmd_sell(
             getattr(parsed, "args", []),
             limit_price=getattr(parsed, "limit", None),
+            stop_price=getattr(parsed, "stop", None),
+            trailing_stop_percent=getattr(parsed, "trailing_stop", None),
             dry_run=getattr(parsed, "dry_run", False),
             live=getattr(parsed, "live", False),
             sell_all=getattr(parsed, "sell_all", False),

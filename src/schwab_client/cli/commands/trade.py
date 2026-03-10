@@ -8,6 +8,8 @@ import os
 import sys
 from typing import Literal
 
+import httpx
+
 from config.secure_account_config import secure_config
 from src.core.errors import ConfigError, PortfolioError
 
@@ -35,7 +37,7 @@ def resolve_account_alias(account: str | None) -> str:
 
 def parse_trade_args(
     args: list[str], command: str, sell_all: bool = False
-) -> tuple[str, str, int | None]:
+) -> tuple[str, str, float | None]:
     """Parse [ACCOUNT] SYMBOL QTY, using default account when omitted.
 
     If sell_all is True, QTY can be omitted and None is returned for quantity.
@@ -205,12 +207,31 @@ def require_trade_confirmation(
     return response == "CONFIRM"
 
 
+def _format_order_type(
+    limit_price: float | None = None,
+    stop_price: float | None = None,
+    trailing_stop_percent: float | None = None,
+) -> str:
+    """Format order type string for display."""
+    if trailing_stop_percent is not None:
+        return f"TRAILING STOP @ {trailing_stop_percent}%"
+    if stop_price is not None and limit_price is not None:
+        return f"STOP-LIMIT stop=${stop_price:.2f} limit=${limit_price:.2f}"
+    if stop_price is not None:
+        return f"STOP @ ${stop_price:.2f}"
+    if limit_price is not None:
+        return f"LIMIT @ ${limit_price:.2f}"
+    return "MARKET"
+
+
 def format_order_preview(
     action: str,
     preview: dict,
     limit_price: float | None,
     account_label: str,
     dry_run: bool = False,
+    stop_price: float | None = None,
+    trailing_stop_percent: float | None = None,
 ) -> str:
     """Format order preview text."""
     header = "ORDER PREVIEW (DRY RUN)" if dry_run else "ORDER PREVIEW"
@@ -221,11 +242,8 @@ def format_order_preview(
         f"Action:   {action}",
         f"Symbol:   {preview['symbol']}",
         f"Quantity: {preview['quantity']} shares",
+        f"Type:     {_format_order_type(limit_price, stop_price, trailing_stop_percent)}",
     ]
-    if limit_price:
-        lines.append(f"Type:     LIMIT @ ${limit_price:.2f}")
-    else:
-        lines.append("Type:     MARKET")
     lines.append(f"Account:  {account_label}")
 
     if dry_run:
@@ -239,6 +257,8 @@ def execute_trade(
     *,
     action: Literal["buy", "sell"],
     limit_price: float | None,
+    stop_price: float | None = None,
+    trailing_stop_percent: float | None = None,
     dry_run: bool,
     live: bool,
     output_mode: str,
@@ -275,12 +295,18 @@ def execute_trade(
             print(f"Selling all {quantity} shares of {symbol}")
 
         # Generate preview
-        if action == "buy":
+        if trailing_stop_percent is not None and action == "sell":
+            preview = client.sell_trailing_stop(account, symbol, quantity, trailing_stop_percent, dry_run=True)
+        elif stop_price is not None and limit_price is not None and action == "sell":
+            preview = client.sell_stop_limit(account, symbol, quantity, stop_price, limit_price, dry_run=True)
+        elif stop_price is not None and action == "sell":
+            preview = client.sell_stop(account, symbol, quantity, stop_price, dry_run=True)
+        elif action == "buy":
             if limit_price:
                 preview = client.buy_limit(account, symbol, quantity, limit_price, dry_run=True)
             else:
                 preview = client.buy_market(account, symbol, quantity, dry_run=True)
-        else:  # sell
+        else:  # sell (market or limit)
             if limit_price:
                 preview = client.sell_limit(account, symbol, quantity, limit_price, dry_run=True)
             else:
@@ -306,7 +332,7 @@ def execute_trade(
                     data={"preview": preview, "submitted": False, "dry_run": True},
                 )
             else:
-                print(format_order_preview(action_upper, preview, limit_price, account_label, dry_run=True))
+                print(format_order_preview(action_upper, preview, limit_price, account_label, dry_run=True, stop_price=stop_price, trailing_stop_percent=trailing_stop_percent))
             return
 
         # Enforce safety rules for live trades
@@ -319,7 +345,7 @@ def execute_trade(
         )
 
         # Show preview
-        print(format_order_preview(action_upper, preview, limit_price, account_label))
+        print(format_order_preview(action_upper, preview, limit_price, account_label, stop_price=stop_price, trailing_stop_percent=trailing_stop_percent))
 
         # Require explicit confirmation
         confirmed = require_trade_confirmation(
@@ -343,7 +369,13 @@ def execute_trade(
             return
 
         # Execute trade
-        if action == "buy":
+        if trailing_stop_percent is not None and action == "sell":
+            result = client.sell_trailing_stop(account, symbol, quantity, trailing_stop_percent)
+        elif stop_price is not None and limit_price is not None and action == "sell":
+            result = client.sell_stop_limit(account, symbol, quantity, stop_price, limit_price)
+        elif stop_price is not None and action == "sell":
+            result = client.sell_stop(account, symbol, quantity, stop_price)
+        elif action == "buy":
             if limit_price:
                 result = client.buy_limit(account, symbol, quantity, limit_price)
             else:
@@ -398,7 +430,7 @@ def execute_trade(
 
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
@@ -429,6 +461,8 @@ def cmd_sell(
     args: list[str],
     *,
     limit_price: float | None = None,
+    stop_price: float | None = None,
+    trailing_stop_percent: float | None = None,
     dry_run: bool = False,
     live: bool = False,
     sell_all: bool = False,
@@ -441,6 +475,8 @@ def cmd_sell(
         args,
         action="sell",
         limit_price=limit_price,
+        stop_price=stop_price,
+        trailing_stop_percent=trailing_stop_percent,
         dry_run=dry_run,
         live=live,
         output_mode=output_mode,
@@ -506,5 +542,5 @@ def cmd_orders(args: list[str], *, output_mode: str = "text") -> None:
 
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)

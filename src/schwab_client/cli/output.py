@@ -17,6 +17,7 @@ from typing import Any, Callable, TypeVar
 
 import httpx
 
+from config.secure_account_config import secure_config
 from src.core.errors import ConfigError, PortfolioError
 
 SCHEMA_VERSION = 1
@@ -54,6 +55,35 @@ def build_response(
     }
 
 
+def scrub_account_identifiers(data: Any) -> Any:
+    """Recursively replace account numbers with aliases in output data.
+
+    Prevents accidental exposure of account numbers in JSON output
+    that may be logged or shared by agents.
+    """
+    if not secure_config.account_mappings:
+        return data
+
+    # Build reverse map: account_number -> alias
+    number_to_alias = {v: k for k, v in secure_config.account_mappings.items()}
+
+    return _scrub_recursive(data, number_to_alias)
+
+
+def _scrub_recursive(data: Any, number_to_alias: dict[str, str]) -> Any:
+    """Recursively scrub account numbers from data structures."""
+    if isinstance(data, str):
+        for number, alias in number_to_alias.items():
+            if number in data:
+                data = data.replace(number, f"[{alias}]")
+        return data
+    elif isinstance(data, dict):
+        return {k: _scrub_recursive(v, number_to_alias) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [_scrub_recursive(item, number_to_alias) for item in data]
+    return data
+
+
 def print_json_response(
     command: str,
     *,
@@ -63,6 +93,7 @@ def print_json_response(
 ) -> None:
     """Print JSON response to stdout."""
     response = build_response(command, success=success, data=data, error=error)
+    response = scrub_account_identifiers(response)
     print(json.dumps(response, indent=2, default=str))
 
 
@@ -105,10 +136,26 @@ def handle_cli_error(error: Exception, *, output_mode: str, command: str) -> Non
         elif status_code == 403:
             message += " Access denied. Check API permissions."
 
+        # Extract Schwab correlation ID for support tickets
+        request_id = None
+        if error.response is not None:
+            request_id = (
+                error.response.headers.get("Schwab-Client-CorrelId")
+                or error.response.headers.get("X-Request-Id")
+                or error.response.headers.get("X-Correlation-Id")
+            )
+
         if output_mode == "json":
-            print_error_json(command, "APIError", message)
+            error_data = {"type": "APIError", "message": message}
+            if request_id:
+                error_data["request_id"] = request_id
+            if status_code:
+                error_data["status_code"] = status_code
+            print_json_response(command, success=False, error=error_data)
         else:
             print(f"API Error: {message}", file=sys.stderr)
+            if request_id:
+                print(f"  Request ID: {request_id} (reference this in support tickets)", file=sys.stderr)
         sys.exit(2)
 
     else:
@@ -155,7 +202,7 @@ def command(name: str):
                 # If function handles output itself, do nothing
                 return result
 
-            except Exception as exc:
+            except (PortfolioError, httpx.HTTPStatusError) as exc:
                 handle_cli_error(exc, output_mode=output_mode, command=name)
 
         return wrapper  # type: ignore

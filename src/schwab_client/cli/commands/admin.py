@@ -4,7 +4,10 @@ Admin commands: auth, doctor, accounts.
 
 import os
 
+import httpx
+
 from config.secure_account_config import ACCOUNTS_FILE, secure_config
+from src.core.errors import PortfolioError
 
 from ...auth import TokenManager, resolve_data_dir, resolve_token_path
 from ...market_auth import resolve_market_token_path
@@ -38,7 +41,7 @@ def cmd_auth(*, output_mode: str = "text") -> None:
 
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
@@ -181,7 +184,7 @@ def cmd_doctor(*, output_mode: str = "text") -> None:
 
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
@@ -218,5 +221,5 @@ def cmd_accounts(*, output_mode: str = "text") -> None:
 
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)

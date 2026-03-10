@@ -4,11 +4,17 @@ Market commands: vix, indices, sectors, market, movers, futures, fundamentals, d
 
 from datetime import datetime, timedelta
 
+import httpx
 from schwab.client.base import BaseClient
 
 from config.secure_account_config import secure_config
+from src.core.errors import PortfolioError
+from src.core.lynch_service import analyze_holdings_lynch
 from src.core.market_service import (
+    get_implied_volatility,
+    get_market_hours,
     get_market_indices,
+    get_market_regime,
     get_market_signals,
     get_sector_performance,
     get_vix,
@@ -36,7 +42,7 @@ def cmd_vix(*, output_mode: str = "text") -> None:
         print(f"  Interpretation: {data['interpretation']}")
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
@@ -60,7 +66,7 @@ def cmd_indices(*, output_mode: str = "text") -> None:
         print(f"\n  Sentiment: {data.get('sentiment')}")
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
@@ -87,7 +93,7 @@ def cmd_sectors(*, output_mode: str = "text") -> None:
         print(f"  Laggards: {', '.join(data.get('laggards', []))}")
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
@@ -112,7 +118,7 @@ def cmd_market(*, output_mode: str = "text") -> None:
         print(f"  Recommendation:  {data.get('recommendation')}")
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
@@ -122,6 +128,7 @@ def cmd_movers(
     gainers_only: bool = False,
     losers_only: bool = False,
     count: int = 5,
+    index: str = "SPX",
 ) -> None:
     """Show top market movers (gainers/losers)."""
     command = "movers"
@@ -129,8 +136,17 @@ def cmd_movers(
         client = get_cached_market_client()
         Movers = BaseClient.Movers
 
+        # Resolve index name to enum
+        index_map = {
+            "SPX": Movers.Index.SPX,
+            "NASDAQ": Movers.Index.NASDAQ,
+            "NYSE": Movers.Index.NYSE,
+            "DJI": Movers.Index.DJI,
+        }
+        movers_index = index_map.get(index.upper(), Movers.Index.SPX)
+
         resp_g = client.get_movers(
-            Movers.Index.SPX,
+            movers_index,
             sort_order=Movers.SortOrder.PERCENT_CHANGE_UP,
             frequency=Movers.Frequency.ONE,
         )
@@ -142,7 +158,7 @@ def cmd_movers(
         )
 
         resp_l = client.get_movers(
-            Movers.Index.SPX,
+            movers_index,
             sort_order=Movers.SortOrder.PERCENT_CHANGE_DOWN,
             frequency=Movers.Frequency.ONE,
         )
@@ -166,6 +182,7 @@ def cmd_movers(
                 {"symbol": l.get("symbol"), "change_pct": l.get("netPercentChange")}
                 for l in true_losers[:count]
             ],
+            "index": index.upper(),
         }
 
         if output_mode == "json":
@@ -173,20 +190,20 @@ def cmd_movers(
             return
 
         if not losers_only:
-            print("\nTOP GAINERS")
+            print(f"\nTOP GAINERS ({index.upper()})")
             for g in data["gainers"][:count]:
                 pct = g["change_pct"] * 100 if g["change_pct"] else 0
                 print(f"  {g['symbol']:8} +{pct:.2f}%")
 
         if not gainers_only:
-            print("\nTOP LOSERS")
+            print(f"\nTOP LOSERS ({index.upper()})")
             for l in data["losers"][:count]:
                 pct = l["change_pct"] * 100 if l["change_pct"] else 0
                 print(f"  {l['symbol']:8} {pct:.2f}%")
 
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
@@ -232,7 +249,34 @@ def cmd_futures(*, output_mode: str = "text") -> None:
 
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
+        handle_cli_error(exc, output_mode=output_mode, command=command)
+
+
+def cmd_hours(*, date: str | None = None, output_mode: str = "text") -> None:
+    """Check if the market is open today (or on a given date)."""
+    command = "hours"
+    try:
+        client = get_cached_market_client()
+        data = get_market_hours(client, date)
+
+        if output_mode == "json":
+            print_json_response(command, data=data)
+            return
+
+        status = "OPEN" if data["is_open"] else "CLOSED"
+        print(format_header("MARKET HOURS"))
+        print(f"  Date:    {data['date']}")
+        print(f"  Status:  {status}")
+
+        if data["is_open"] and data.get("session_hours"):
+            for session, hours in data["session_hours"].items():
+                label = session.replace("regularMarket", "Regular").replace("preMarket", "Pre-Market").replace("postMarket", "Post-Market")
+                print(f"  {label:14s} {hours['start']} → {hours['end']}")
+
+        print()
+
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
@@ -280,7 +324,7 @@ def cmd_fundamentals(symbol: str, *, output_mode: str = "text") -> None:
         print(f"  52wk Low:   ${fund_data['52wk_low'] or 'N/A'}")
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
@@ -397,5 +441,224 @@ def cmd_dividends(
 
         print()
 
-    except Exception as exc:
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
+        handle_cli_error(exc, output_mode=output_mode, command=command)
+
+
+def cmd_regime(*, output_mode: str = "text") -> None:
+    """Show market regime (risk-on/risk-off) based on bond relative strength."""
+    command = "regime"
+    try:
+        client = get_cached_market_client()
+        data = get_market_regime(client)
+
+        if output_mode == "json":
+            print_json_response(command, data=data)
+            return
+
+        signals = data.get("signals", {})
+        regime = data.get("regime", "unknown")
+        regime_display = regime.replace("_", " ").upper()
+
+        print(format_header("MARKET REGIME"))
+        print(f"  Regime:      {regime_display}")
+        print(f"  Description: {data.get('description', '')}")
+        print()
+        print("  Signals:")
+        print(f"    AGG 60d return:  {signals.get('agg_60d_return', 0):+.2f}%")
+        print(f"    BIL 60d return:  {signals.get('bil_60d_return', 0):+.2f}%")
+        print(f"    TLT 20d return:  {signals.get('tlt_20d_return', 0):+.2f}%")
+        print(f"    BIL 20d return:  {signals.get('bil_20d_return', 0):+.2f}%")
+        print()
+        print(f"  Risk-On:       {'Yes' if data.get('risk_on') else 'No'} (AGG > BIL 60d)")
+        print(f"  Rates Rising:  {'Yes' if data.get('rates_rising') else 'No'} (TLT < BIL 20d)")
+        print()
+
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
+        handle_cli_error(exc, output_mode=output_mode, command=command)
+
+
+def cmd_lynch(*, output_mode: str = "text") -> None:
+    """Check Lynch sell signals on portfolio holdings."""
+    command = "lynch"
+    try:
+        portfolio_client = get_client()
+        market_client = get_cached_market_client()
+
+        # Get top holdings
+        positions = portfolio_client.get_positions(None)
+        # Take top 15 by value, skip money market
+        from ...client import MONEY_MARKET_SYMBOLS
+
+        positions = [p for p in positions if p.get("symbol") not in MONEY_MARKET_SYMBOLS]
+        positions.sort(key=lambda p: p.get("market_value", 0), reverse=True)
+        top_positions = positions[:15]
+
+        if not top_positions:
+            if output_mode == "json":
+                print_json_response(command, data={"holdings": [], "signals_count": 0})
+            else:
+                print("No positions found.")
+            return
+
+        # Fetch fundamentals for each
+        symbols = [p["symbol"] for p in top_positions]
+
+        Instrument = market_client.Instrument.Projection
+        resp = market_client.get_instruments(symbols, Instrument.FUNDAMENTAL)
+        fund_data = resp.json() if hasattr(resp, "json") else resp
+        instruments = fund_data.get("instruments", []) if isinstance(fund_data, dict) else []
+
+        fund_by_symbol = {}
+        for inst in instruments:
+            sym = inst.get("symbol", "")
+            fund = inst.get("fundamental", {})
+            # Also get quote data for price
+            fund["lastPrice"] = inst.get("lastPrice", 0)
+            fund_by_symbol[sym] = fund
+
+        holdings_data = []
+        for pos in top_positions:
+            sym = pos["symbol"]
+            holdings_data.append({
+                "symbol": sym,
+                "fundamentals": fund_by_symbol.get(sym, {}),
+            })
+
+        results = analyze_holdings_lynch(holdings_data)
+
+        total_signals = sum(len(r["signals"]) for r in results)
+
+        if output_mode == "json":
+            print_json_response(command, data={"holdings": results, "signals_count": total_signals})
+            return
+
+        print(format_header("LYNCH SELL-SIGNAL CHECK"))
+
+        for r in results:
+            symbol = r["symbol"]
+            ctype = r["company_type"].replace("_", " ").title()
+            pe = r.get("pe_ratio")
+            pe_str = f"P/E {pe:.1f}" if pe else "P/E N/A"
+
+            if r["signals"]:
+                print(f"\n  {symbol:8s} [{ctype}] {pe_str}")
+                for sig in r["signals"]:
+                    severity = sig["severity"].upper()
+                    print(f"    [{severity}] {sig['trigger']}")
+                    print(f"           {sig['detail']}")
+            else:
+                print(f"  {symbol:8s} [{ctype}] {pe_str} - No sell signals")
+
+        print(f"\n  Total signals: {total_signals}")
+        print()
+
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
+        handle_cli_error(exc, output_mode=output_mode, command=command)
+
+
+def cmd_score(symbol: str, *, output_mode: str = "text") -> None:
+    """Score a stock using Compounding Quality 15-point framework."""
+    from src.core.score_service import score_from_fundamentals
+
+    command = "score"
+    try:
+        client = get_cached_market_client()
+
+        Instrument = client.Instrument.Projection
+        resp = client.get_instruments([symbol.upper()], Instrument.FUNDAMENTAL)
+        data = resp.json() if hasattr(resp, "json") else resp
+
+        instruments = data.get("instruments", []) if isinstance(data, dict) else []
+        if not instruments:
+            raise PortfolioError(f"No fundamentals data found for {symbol}")
+
+        fund = instruments[0].get("fundamental", {})
+        fund["lastPrice"] = instruments[0].get("lastPrice", 0)
+
+        result = score_from_fundamentals(symbol.upper(), fund)
+
+        if output_mode == "json":
+            print_json_response(command, data=result)
+            return
+
+        signal = result["signal"]
+        projected = result["projected_total"]
+
+        print(format_header(f"QUALITY SCORE: {symbol.upper()}"))
+        print(f"  Signal: {signal} (projected {projected}/75)")
+        print(f"  Scored: {result['quantitative_total']}/{result['quantitative_max']} ({result['scored_count']} dimensions)")
+        print(f"  Needs review: {result['unscored_count']} qualitative dimensions")
+        print()
+
+        for dim_name, dim_data in result["dimensions"].items():
+            label = dim_name.replace("_", " ").title()
+            score = dim_data["score"]
+            note = dim_data["note"]
+            if score is not None:
+                bar = "*" * score + "." * (5 - score)
+                print(f"  {label:28s} [{bar}] {score}/5  {note}")
+            else:
+                print(f"  {label:28s} [?????] ?/5  {note}")
+
+        print()
+
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
+        handle_cli_error(exc, output_mode=output_mode, command=command)
+
+
+def cmd_iv(symbol: str, *, output_mode: str = "text") -> None:
+    """Show implied volatility for a symbol from option chain data."""
+    command = "iv"
+    try:
+        client = get_cached_market_client()
+        data = get_implied_volatility(client, symbol)
+
+        if output_mode == "json":
+            print_json_response(command, data=data)
+            return
+
+        iv = data.get("implied_volatility")
+        if iv is None:
+            print(f"\n  No IV data available for {symbol.upper()}")
+            print("  (Symbol may not have listed options)")
+            return
+
+        print(format_header(f"IMPLIED VOLATILITY: {data['symbol']}"))
+        print(f"  IV:             {iv:.1f}%")
+        print(f"  Mark Price:     ${data['mark_price']:,.2f}")
+        if data.get("dte"):
+            print(f"  Nearest Exp:    {data['dte']} DTE")
+        print(f"  Signal:         {data['signal']}")
+        print(f"  Interpretation: {data['interpretation']}")
+        print()
+
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
+        handle_cli_error(exc, output_mode=output_mode, command=command)
+
+
+def cmd_hours(*, date: str | None = None, output_mode: str = "text") -> None:
+    """Check if the equity market is open on a given date."""
+    from src.core.market_service import get_market_hours
+
+    command = "hours"
+    try:
+        client = get_cached_market_client()
+        data = get_market_hours(client, date)
+
+        if output_mode == "json":
+            print_json_response(command, data=data)
+            return
+
+        status = "OPEN" if data["is_open"] else "CLOSED"
+        print(format_header("MARKET HOURS"))
+        print(f"  Date:    {data['date']}")
+        print(f"  Market:  {data['product']}")
+        print(f"  Status:  {status}")
+        if data.get("session_hours"):
+            for session, hours in data["session_hours"].items():
+                print(f"  {session}: {hours['start']} - {hours['end']}")
+        print()
+
+    except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)

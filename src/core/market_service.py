@@ -163,6 +163,67 @@ def get_sector_performance(client) -> dict[str, Any]:
     }
 
 
+def _cumulative_return(candles: list[dict], days: int) -> float:
+    """Calculate cumulative return over the last N trading days from price candles."""
+    if len(candles) < days + 1:
+        return 0.0
+    recent = candles[-(days + 1):]
+    start_price = recent[0].get("close", 0)
+    end_price = recent[-1].get("close", 0)
+    if start_price <= 0:
+        return 0.0
+    return (end_price - start_price) / start_price * 100
+
+
+def get_market_regime(client) -> dict[str, Any]:
+    """Detect market regime using bond/equity relative strength.
+
+    Uses AGG vs BIL (60-day) for risk-on/risk-off determination,
+    and TLT vs BIL (20-day) for rate direction within risk-off.
+
+    Regimes:
+      - risk_on: AGG 60d return > BIL 60d return (credit expanding)
+      - risk_off_falling_rates: TLT 20d return > BIL 20d return
+      - risk_off_rising_rates: TLT 20d return < BIL 20d return
+    """
+    symbols = ["AGG", "BIL", "TLT"]
+    candles_by_symbol: dict[str, list] = {}
+
+    for symbol in symbols:
+        resp = client.get_price_history_every_day(symbol)
+        data = resp.json() if hasattr(resp, "json") else resp
+        candles_by_symbol[symbol] = data.get("candles", [])
+
+    agg_60 = _cumulative_return(candles_by_symbol.get("AGG", []), 60)
+    bil_60 = _cumulative_return(candles_by_symbol.get("BIL", []), 60)
+    tlt_20 = _cumulative_return(candles_by_symbol.get("TLT", []), 20)
+    bil_20 = _cumulative_return(candles_by_symbol.get("BIL", []), 20)
+
+    if agg_60 > bil_60:
+        regime = "risk_on"
+        description = "Credit expanding — conditions favor equity exposure"
+    elif tlt_20 < bil_20:
+        regime = "risk_off_rising_rates"
+        description = "Risk-off with rising rates — favor dollar strength, short bonds"
+    else:
+        regime = "risk_off_falling_rates"
+        description = "Risk-off with falling rates — favor treasuries, gold, defensives"
+
+    return {
+        "regime": regime,
+        "description": description,
+        "signals": {
+            "agg_60d_return": round(agg_60, 2),
+            "bil_60d_return": round(bil_60, 2),
+            "tlt_20d_return": round(tlt_20, 2),
+            "bil_20d_return": round(bil_20, 2),
+        },
+        "risk_on": agg_60 > bil_60,
+        "rates_rising": tlt_20 < bil_20,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
 def get_market_signals(client) -> dict[str, Any]:
     """Combine VIX, indices, and sector rotation into actionable signals."""
     vix_data = get_vix(client)
@@ -201,5 +262,143 @@ def get_market_signals(client) -> dict[str, Any]:
         "signals": signals,
         "overall": overall,
         "recommendation": recommendation,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+def get_implied_volatility(client, symbol: str) -> dict[str, Any]:
+    """Fetch implied volatility from option chain for a symbol.
+
+    Uses the ANALYTICAL strategy to get IV data from near-term ATM options.
+    Returns current IV, percentile context, and signal interpretation.
+    """
+    symbol_upper = symbol.upper()
+
+    resp = client.get_option_chain(
+        symbol_upper,
+        contract_type=client.Options.ContractType.CALL,
+        strike_count=1,
+        strategy=client.Options.Strategy.ANALYTICAL,
+    )
+    data = resp.json() if hasattr(resp, "json") else resp
+
+    underlying = data.get("underlying") or {}
+    mark = underlying.get("mark") or underlying.get("last") or 0
+
+    # Fall back to regular quote if underlying price not in option chain
+    if not mark:
+        quote_data = _ensure_ok(client.get_quote(symbol_upper), f"quote:{symbol_upper}")
+        quote = quote_data.get(symbol_upper, {}).get("quote", {})
+        mark = quote.get("lastPrice") or quote.get("closePrice") or 0
+
+    # Extract IV from the volatility field or from near-term options
+    iv = data.get("volatility", 0)
+
+    # If top-level volatility not available, compute from nearest expiry
+    if not iv:
+        call_map = data.get("callExpDateMap", {})
+        if call_map:
+            # Take first expiration
+            first_exp = next(iter(call_map.values()), {})
+            if first_exp:
+                # Take the strike closest to ATM
+                first_strike_options = next(iter(first_exp.values()), [])
+                if first_strike_options:
+                    opt = first_strike_options[0] if isinstance(first_strike_options, list) else first_strike_options
+                    iv = opt.get("volatility", 0)
+
+    # Normalize to percentage if needed (API sometimes returns decimal)
+    if iv and iv < 5:
+        iv = iv * 100
+
+    # Interpret IV level
+    if iv < 15:
+        signal = "very_low"
+        interpretation = "Unusually calm — options cheap, consider buying protection"
+    elif iv < 25:
+        signal = "low"
+        interpretation = "Below average volatility"
+    elif iv < 35:
+        signal = "normal"
+        interpretation = "Normal implied volatility range"
+    elif iv < 50:
+        signal = "elevated"
+        interpretation = "Elevated — market pricing significant move"
+    elif iv < 75:
+        signal = "high"
+        interpretation = "High IV — potential opportunity for sellers"
+    else:
+        signal = "extreme"
+        interpretation = "Extreme IV — crisis or event-driven"
+
+    # Days to expiration from nearest chain
+    dte = 0
+    call_map = data.get("callExpDateMap", {})
+    if call_map:
+        first_exp_key = next(iter(call_map), "")
+        # Key format is typically "2026-03-14:4"
+        if ":" in first_exp_key:
+            try:
+                dte = int(first_exp_key.split(":")[1])
+            except (ValueError, IndexError):
+                pass
+
+    return {
+        "symbol": symbol_upper,
+        "implied_volatility": round(iv, 2) if iv else None,
+        "mark_price": mark,
+        "dte": dte,
+        "signal": signal,
+        "interpretation": interpretation,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+def get_market_hours(client, date_str: str | None = None) -> dict[str, Any]:
+    """Check if the equity market is open on a given date.
+
+    Args:
+        client: Authenticated market client
+        date_str: Date to check (YYYY-MM-DD). Defaults to today.
+
+    Returns:
+        Dict with is_open, session_hours, and market status details.
+    """
+    from datetime import date as date_type
+
+    check_date = (
+        date_type.fromisoformat(date_str) if date_str
+        else datetime.now().date()
+    )
+
+    resp = client.get_market_hours(
+        client.MarketHours.Market.EQUITY,
+        date=check_date,
+    )
+    data = resp.json() if hasattr(resp, "json") else resp
+
+    # Response structure: {"equity": {"EQ": {...}}} or {"equity": {"equity": {...}}}
+    equity_data = data.get("equity", {})
+    # Get the first (and usually only) market entry
+    market_info = next(iter(equity_data.values()), {})
+
+    is_open = market_info.get("isOpen", False)
+    market_date = market_info.get("date", str(check_date))
+    product_name = market_info.get("productName", "US Equity")
+
+    session_hours = {}
+    if is_open:
+        for session_name, hours_list in market_info.get("sessionHours", {}).items():
+            if hours_list:
+                session_hours[session_name] = {
+                    "start": hours_list[0].get("start", ""),
+                    "end": hours_list[0].get("end", ""),
+                }
+
+    return {
+        "date": market_date,
+        "is_open": is_open,
+        "product": product_name,
+        "session_hours": session_hours,
         "timestamp": datetime.now().isoformat(),
     }
