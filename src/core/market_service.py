@@ -131,14 +131,17 @@ def get_sector_performance(client) -> dict[str, Any]:
     defensive = {"XLU", "XLP", "XLV"}
     cyclical = {"XLY", "XLK", "XLF"}
 
+    defensive_sectors = [s for s in sectors if s["symbol"] in defensive]
+    cyclical_sectors = [s for s in sectors if s["symbol"] in cyclical]
+
     defensive_avg = (
-        sum(s["change_pct"] for s in sectors if s["symbol"] in defensive) / 3
-        if sectors
+        sum(s["change_pct"] for s in defensive_sectors) / len(defensive_sectors)
+        if defensive_sectors
         else 0
     )
     cyclical_avg = (
-        sum(s["change_pct"] for s in sectors if s["symbol"] in cyclical) / 3
-        if sectors
+        sum(s["change_pct"] for s in cyclical_sectors) / len(cyclical_sectors)
+        if cyclical_sectors
         else 0
     )
 

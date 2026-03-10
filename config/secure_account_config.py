@@ -95,27 +95,32 @@ class SecureAccountConfig:
             }
 
             for alias, account_data in config.get("accounts", {}).items():
+                account_number = account_data.get("account_number")
+                if not account_number:
+                    logger.warning(f"Skipping account '{alias}': missing account_number")
+                    continue
+
                 # Create AccountInfo object
                 account_info = AccountInfo(
                     alias=alias,
-                    account_number=account_data["account_number"],
-                    name=account_data["name"],
-                    label=account_data["label"],
-                    account_type=account_data["type"],
-                    tax_status=account_data["tax_status"],
-                    category=account_data["category"],
+                    account_number=account_number,
+                    name=account_data.get("name", alias),
+                    label=account_data.get("label", alias),
+                    account_type=account_data.get("type", "other"),
+                    tax_status=account_data.get("tax_status", "taxable"),
+                    category=account_data.get("category", "personal"),
                     notes=account_data.get("notes", ""),
                     distribution_deadline=account_data.get("distribution_deadline"),
                     beneficiary=account_data.get("beneficiary"),
                 )
 
                 self.account_info[alias] = account_info
-                self.account_mappings[alias] = account_data["account_number"]
+                self.account_mappings[alias] = account_number
 
                 # Add to category
-                category = account_data["category"]
+                category = account_data.get("category", "personal")
                 if category in self.categories:
-                    self.categories[category].append(account_data["account_number"])
+                    self.categories[category].append(account_number)
 
             logger.info(f"Loaded {len(self.account_info)} accounts from {ACCOUNTS_FILE}")
 

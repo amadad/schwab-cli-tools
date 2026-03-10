@@ -74,6 +74,9 @@ def parse_trade_args(
     except ValueError as exc:
         raise ConfigError("Quantity must be a number.") from exc
 
+    if quantity <= 0:
+        raise ConfigError("Quantity must be greater than zero.")
+
     return account_alias, symbol.upper(), quantity
 
 
