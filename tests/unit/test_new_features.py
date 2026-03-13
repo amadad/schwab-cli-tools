@@ -1,11 +1,9 @@
 """Tests for new features: market regime, Lynch signals, quality score,
 extended order types, account scrubbing, and CLI routing."""
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # =============================================================================
 # 1. Market Regime Detection
@@ -146,11 +144,13 @@ class TestClassifyCompanyType:
     def test_slow_grower(self):
         from src.core.lynch_service import classify_company_type
 
-        result = classify_company_type({
-            "epsTTMGrowthRate5Y": 3,
-            "peRatio": 8,
-            "dividendYield": 4,
-        })
+        result = classify_company_type(
+            {
+                "epsTTMGrowthRate5Y": 3,
+                "peRatio": 8,
+                "dividendYield": 4,
+            }
+        )
         assert result == "slow_grower"
 
     def test_stalwart(self):
@@ -185,60 +185,78 @@ class TestCheckSellSignals:
     def test_stalwart_pe_above_growth(self):
         from src.core.lynch_service import check_sell_signals
 
-        signals = check_sell_signals("stalwart", {
-            "peRatio": 40,
-            "epsTTMGrowthRate5Y": 10,
-        })
+        signals = check_sell_signals(
+            "stalwart",
+            {
+                "peRatio": 40,
+                "epsTTMGrowthRate5Y": 10,
+            },
+        )
         assert len(signals) >= 1
         assert any("P/E well above" in s["trigger"] for s in signals)
 
     def test_stalwart_no_signal_when_pe_reasonable(self):
         from src.core.lynch_service import check_sell_signals
 
-        signals = check_sell_signals("stalwart", {
-            "peRatio": 15,
-            "epsTTMGrowthRate5Y": 12,
-        })
+        signals = check_sell_signals(
+            "stalwart",
+            {
+                "peRatio": 15,
+                "epsTTMGrowthRate5Y": 12,
+            },
+        )
         pe_signals = [s for s in signals if "P/E" in s["trigger"]]
         assert len(pe_signals) == 0
 
     def test_fast_grower_peg_above_one(self):
         from src.core.lynch_service import check_sell_signals
 
-        signals = check_sell_signals("fast_grower", {
-            "peRatio": 30,
-            "epsTTMGrowthRate5Y": 20,
-        })
+        signals = check_sell_signals(
+            "fast_grower",
+            {
+                "peRatio": 30,
+                "epsTTMGrowthRate5Y": 20,
+            },
+        )
         assert any("PEG > 1" in s["trigger"] for s in signals)
 
     def test_slow_grower_high_payout(self):
         from src.core.lynch_service import check_sell_signals
 
-        signals = check_sell_signals("slow_grower", {
-            "dividendPayoutRatio": 75,
-        })
+        signals = check_sell_signals(
+            "slow_grower",
+            {
+                "dividendPayoutRatio": 75,
+            },
+        )
         assert any("payout ratio" in s["trigger"].lower() for s in signals)
 
     def test_turnaround_near_52week_high(self):
         from src.core.lynch_service import check_sell_signals
 
-        signals = check_sell_signals("turnaround", {
-            "high52": 100,
-            "low52": 50,
-            "lastPrice": 95,
-        })
+        signals = check_sell_signals(
+            "turnaround",
+            {
+                "high52": 100,
+                "low52": 50,
+                "lastPrice": 95,
+            },
+        )
         assert any("turnaround" in s["trigger"].lower() for s in signals)
 
     def test_universal_at_52week_high(self):
         from src.core.lynch_service import check_sell_signals
 
-        signals = check_sell_signals("stalwart", {
-            "peRatio": 15,
-            "epsTTMGrowthRate5Y": 12,
-            "high52": 100,
-            "low52": 50,
-            "lastPrice": 99,
-        })
+        signals = check_sell_signals(
+            "stalwart",
+            {
+                "peRatio": 15,
+                "epsTTMGrowthRate5Y": 12,
+                "high52": 100,
+                "low52": 50,
+                "lastPrice": 99,
+            },
+        )
         assert any("52-week high" in s["trigger"] for s in signals)
 
     def test_no_signals_on_empty_fundamentals(self):
@@ -355,8 +373,16 @@ class TestScoreFromFundamentals:
 
         result = score_from_fundamentals("TEST", {"peRatio": 20})
 
-        for key in ("symbol", "dimensions", "quantitative_total", "quantitative_max",
-                     "scored_count", "unscored_count", "projected_total", "signal"):
+        for key in (
+            "symbol",
+            "dimensions",
+            "quantitative_total",
+            "quantitative_max",
+            "scored_count",
+            "unscored_count",
+            "projected_total",
+            "signal",
+        ):
             assert key in result
 
         # Qualitative dimensions should have score=None

@@ -7,14 +7,14 @@ redundant token I/O on every command.
 
 import logging
 import os
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from src.core.errors import ConfigError
 
 from ..auth import get_authenticated_client, resolve_data_dir
 from ..client import SchwabClientWrapper
 from ..market_auth import get_market_client
-from src.core.errors import ConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -82,10 +82,11 @@ def get_trade_logger() -> logging.Logger:
     # Avoid duplicate handlers
     if not _trade_logger.handlers:
         handler = logging.FileHandler(log_path)
-        handler.setFormatter(logging.Formatter(
-            "%(asctime)s | %(levelname)s | %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
-        ))
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+            )
+        )
         _trade_logger.addHandler(handler)
 
     return _trade_logger
@@ -119,35 +120,4 @@ def log_trade_attempt(
     else:
         status = "ATTEMPTED"
 
-    logger.info(
-        f"{action} | {symbol} | {quantity} | {order_type} | {account_alias} | {status}"
-    )
-
-
-@dataclass
-class CommandContext:
-    """Context object passed to command handlers.
-
-    Provides access to cached clients and shared configuration.
-    """
-    output_mode: str = "text"
-    _client: SchwabClientWrapper | None = field(default=None, repr=False)
-    _market_client: Any | None = field(default=None, repr=False)
-
-    @property
-    def client(self) -> SchwabClientWrapper:
-        """Lazy-load portfolio client."""
-        if self._client is None:
-            self._client = get_client()
-        return self._client
-
-    @property
-    def market_client(self):
-        """Lazy-load market client."""
-        if self._market_client is None:
-            self._market_client = get_cached_market_client()
-        return self._market_client
-
-    @property
-    def is_json(self) -> bool:
-        return self.output_mode == "json"
+    logger.info(f"{action} | {symbol} | {quantity} | {order_type} | {account_alias} | {status}")

@@ -39,20 +39,24 @@ Tokens default to `~/.schwab-cli-tools/tokens`. In this repo, keep tokens in
 `./tokens` (gitignored) by setting `SCHWAB_CLI_DATA_DIR=.` or explicit
 `SCHWAB_TOKEN_PATH` / `SCHWAB_MARKET_TOKEN_PATH`. Reports default to
 `~/.schwab-cli-tools/reports`; set `SCHWAB_REPORT_DIR=./private/reports` to keep
-them under `private/`. Refresh tokens expire after 7 days.
+them under `private/`. Snapshot history defaults to `./private/history/schwab_history.db`
+when `./private/` exists; override with `SCHWAB_HISTORY_DB_PATH`. Refresh tokens
+expire after 7 days.
 
 ## Local Data Layout
 
 Keep the working tree matching upstream; local artifacts live in gitignored folders:
 - `config/accounts.json` (account aliases + numbers)
 - `tokens/` (auth tokens when repo-local paths are configured)
-- `private/` (notes, snapshots, reports, journal, reviews, market_cycle, etc.)
+- `private/` (notes, snapshots, reports, history DB, journal, reviews, market_cycle, etc.)
 
 Recommended `.env` overrides for repo-local data:
 
 ```bash
 SCHWAB_CLI_DATA_DIR=.
 SCHWAB_REPORT_DIR=./private/reports
+SCHWAB_HISTORY_DB_PATH=./private/history/schwab_history.db
+SCHWAB_MANUAL_ACCOUNTS_PATH=./private/notes/manual_accounts.json
 # Optional explicit token paths:
 SCHWAB_TOKEN_PATH=./tokens/schwab_token.json
 SCHWAB_MARKET_TOKEN_PATH=./tokens/schwab_market_token.json
@@ -61,7 +65,8 @@ SCHWAB_MARKET_TOKEN_PATH=./tokens/schwab_market_token.json
 ## CLI Contract
 
 Use `uv run schwab <command>` (or `schwab` if installed). Add `--json` for the
-response envelope.
+response envelope. For the full historical snapshot/query contract, use
+`docs/history.md` as the canonical reference.
 
 ### Commands
 
@@ -82,8 +87,10 @@ response envelope.
 | `auth` | | Check authentication |
 | `doctor` | `dr` | Run diagnostics |
 | `accounts` | | List configured accounts |
-| `report [--output PATH]` | | Generate portfolio report |
-| `snapshot` | `snap` | Get complete data snapshot |
+| `history [--dataset ...]` | `hist` | Query stored snapshot history |
+| `query SQL` | | Run read-only SQL against snapshot history |
+| `report [--output PATH]` | | Export canonical snapshot JSON |
+| `snapshot [--output [PATH]] [--no-market]` | `snap` | Capture canonical snapshot |
 | `buy [ACCOUNT] SYMBOL QTY` | | Buy shares |
 | `sell [ACCOUNT] SYMBOL QTY` | | Sell shares |
 | `orders [ACCOUNT]` | `ord` | Show open orders |
@@ -150,16 +157,22 @@ src/schwab_client/
 │   └── commands/           # Command handlers
 │       ├── portfolio.py    # portfolio, positions, balance, allocation
 │       ├── market.py       # vix, indices, sectors, movers, futures
+│       ├── history.py      # history, query
 │       ├── trade.py        # buy, sell, orders (unified execute_trade)
 │       ├── admin.py        # auth, doctor, accounts
 │       └── report.py       # report, snapshot
+├── _client/                # Internal client mixins / shared helpers
+├── _history/               # Internal history schema + normalization + store
 ├── auth.py                 # Portfolio API authentication
 ├── market_auth.py          # Market API authentication
-└── client.py               # SchwabClientWrapper
+├── history.py              # Public SQLite history API
+├── snapshot.py             # Canonical snapshot collection
+└── client.py               # Public SchwabClientWrapper surface
 
 src/core/                   # Pure business logic (no I/O)
 ├── portfolio_service.py    # Portfolio aggregation
 ├── market_service.py       # Market data processing
+├── snapshot_service.py     # Manual-account merge + snapshot helpers
 └── errors.py               # Custom exceptions
 
 config/

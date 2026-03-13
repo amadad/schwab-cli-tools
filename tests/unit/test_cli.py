@@ -1,15 +1,12 @@
 """Tests for Schwab CLI commands."""
 
 import json
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from tests.conftest import (
     CLIResult,
-    assert_json_error,
-    assert_json_success,
     run_cli,
     validate_envelope,
 )
@@ -95,9 +92,10 @@ class TestTradeSafety:
 
     def test_live_trading_disabled_by_default(self):
         """Test live trading is blocked without env var."""
+        import os
+
         from src.schwab_client.cli.commands.trade import is_live_trading_enabled
 
-        import os
         # Ensure env var is not set
         os.environ.pop("SCHWAB_ALLOW_LIVE_TRADES", None)
 
@@ -105,9 +103,10 @@ class TestTradeSafety:
 
     def test_live_trading_enabled_with_env_var(self):
         """Test live trading enabled with env var."""
+        import os
+
         from src.schwab_client.cli.commands.trade import is_live_trading_enabled
 
-        import os
         os.environ["SCHWAB_ALLOW_LIVE_TRADES"] = "true"
         try:
             assert is_live_trading_enabled() is True
@@ -116,10 +115,11 @@ class TestTradeSafety:
 
     def test_ensure_trade_blocks_without_env_var(self):
         """Test ensure_trade_confirmation blocks live trades."""
-        from src.schwab_client.cli.commands.trade import ensure_trade_confirmation
-        from src.core.errors import ConfigError
-
         import os
+
+        from src.core.errors import ConfigError
+        from src.schwab_client.cli.commands.trade import ensure_trade_confirmation
+
         os.environ.pop("SCHWAB_ALLOW_LIVE_TRADES", None)
 
         with pytest.raises(ConfigError, match="Live trading is disabled"):
@@ -132,9 +132,10 @@ class TestTradeSafety:
 
     def test_ensure_trade_allows_dry_run(self):
         """Test dry-run is always allowed."""
+        import os
+
         from src.schwab_client.cli.commands.trade import ensure_trade_confirmation
 
-        import os
         os.environ.pop("SCHWAB_ALLOW_LIVE_TRADES", None)
 
         # Should not raise - dry_run is always allowed
@@ -192,11 +193,11 @@ class TestAccountsCommandJSON:
 
         mock_config.get_all_accounts.return_value = {"test_acct": mock_info}
 
-        from src.schwab_client.cli import main
-
         # Capture stdout
         import io
         from contextlib import redirect_stdout
+
+        from src.schwab_client.cli import main
 
         f = io.StringIO()
         with redirect_stdout(f):
@@ -414,4 +415,78 @@ class TestCLIArgParsing:
             output_mode="text",
             output_path=None,
             include_market=True,
+        )
+
+    @patch("src.schwab_client.cli.cmd_snapshot")
+    def test_main_parses_snapshot_command(self, mock_cmd):
+        """Test main function parses snapshot command."""
+        from src.schwab_client.cli import main
+
+        with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
+            main(["snapshot", "--output", "./out.json", "--no-market"])
+
+        mock_cmd.assert_called_once_with(
+            output_mode="text",
+            output_path="./out.json",
+            include_market=False,
+        )
+
+    @patch("src.schwab_client.cli.cmd_snapshot")
+    def test_main_parses_snapshot_command_with_default_output_path(self, mock_cmd):
+        """Test snapshot --output with no value uses the default output location."""
+        from src.schwab_client.cli import main
+
+        with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
+            main(["snapshot", "--output", "--no-market"])
+
+        mock_cmd.assert_called_once_with(
+            output_mode="text",
+            output_path="",
+            include_market=False,
+        )
+
+    @patch("src.schwab_client.cli.cmd_history")
+    def test_main_parses_history_command(self, mock_cmd):
+        """Test main function parses history command."""
+        from src.schwab_client.cli import main
+
+        with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
+            main(["history", "--dataset", "portfolio", "--limit", "5"])
+
+        mock_cmd.assert_called_once_with(
+            output_mode="text",
+            dataset="portfolio",
+            limit=5,
+            since=None,
+            symbol=None,
+            account=None,
+            backfill_paths=None,
+        )
+
+    @patch("src.schwab_client.cli.cmd_query")
+    def test_main_parses_query_command(self, mock_cmd):
+        """Test main function parses query command."""
+        from src.schwab_client.cli import main
+
+        with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
+            main(["query", "SELECT 1"])
+
+        mock_cmd.assert_called_once_with("SELECT 1", output_mode="text")
+
+    @patch("src.schwab_client.cli.cmd_history")
+    def test_main_parses_history_import_defaults(self, mock_cmd):
+        """Test history --import-defaults triggers default backfill."""
+        from src.schwab_client.cli import main
+
+        with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
+            main(["history", "--import-defaults"])
+
+        mock_cmd.assert_called_once_with(
+            output_mode="text",
+            dataset="runs",
+            limit=20,
+            since=None,
+            symbol=None,
+            account=None,
+            backfill_paths=[],
         )

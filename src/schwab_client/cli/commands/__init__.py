@@ -1,6 +1,7 @@
 """CLI command modules."""
 
 from .admin import cmd_accounts, cmd_auth, cmd_doctor
+from .history import cmd_history, cmd_query
 from .market import (
     cmd_dividends,
     cmd_fundamentals,
@@ -10,9 +11,9 @@ from .market import (
     cmd_iv,
     cmd_lynch,
     cmd_market,
-    cmd_score,
     cmd_movers,
     cmd_regime,
+    cmd_score,
     cmd_sectors,
     cmd_vix,
 )
@@ -53,6 +54,9 @@ __all__ = [
     "cmd_auth",
     "cmd_doctor",
     "cmd_accounts",
+    # History
+    "cmd_history",
+    "cmd_query",
     # Report
     "cmd_report",
     "cmd_snapshot",

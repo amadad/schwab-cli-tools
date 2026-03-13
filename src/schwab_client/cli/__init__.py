@@ -21,8 +21,10 @@ Commands:
     auth         Check authentication
     doctor       Run diagnostics
     accounts     List accounts
-    report       Generate report
-    snapshot     Get data snapshot
+    history      Query stored snapshot history
+    query        Run read-only SQL against snapshot history
+    report       Export snapshot JSON
+    snapshot     Capture data snapshot
     buy          Buy shares
     sell         Sell shares
     orders       Show orders
@@ -35,6 +37,7 @@ from importlib.metadata import version as get_version
 
 try:
     import argcomplete
+
     ARGCOMPLETE_AVAILABLE = True
 except ImportError:
     ARGCOMPLETE_AVAILABLE = False
@@ -49,18 +52,20 @@ from .commands import (
     cmd_doctor,
     cmd_fundamentals,
     cmd_futures,
+    cmd_history,
     cmd_hours,
     cmd_indices,
     cmd_iv,
     cmd_lynch,
     cmd_market,
-    cmd_score,
     cmd_movers,
     cmd_orders,
     cmd_portfolio,
-    cmd_regime,
     cmd_positions,
+    cmd_query,
+    cmd_regime,
     cmd_report,
+    cmd_score,
     cmd_sectors,
     cmd_sell,
     cmd_snapshot,
@@ -87,6 +92,7 @@ COMMAND_ALIASES = {
     "ly": "lynch",
     "reg": "regime",
     "dr": "doctor",
+    "hist": "history",
     "snap": "snapshot",
     "ord": "orders",
 }
@@ -125,19 +131,21 @@ Aliases:
   p=portfolio, pos=positions, bal=balance, alloc=allocation,
   idx=indices, sec=sectors, mkt=market,
   mov=movers, fut=futures, fund=fundamentals, div=dividends,
-  dr=doctor, snap=snapshot, ord=orders
+  dr=doctor, hist=history, snap=snapshot, ord=orders
 
 Examples:
   schwab portfolio --json
   schwab p -p                  # portfolio with positions
   schwab positions --symbol AAPL
+  schwab history --dataset portfolio --limit 10
+  schwab query "SELECT * FROM portfolio_history LIMIT 5"
+  schwab snapshot --json
+  schwab snapshot --output ./private/reports/latest.json
   schwab buy acct_trading AAPL 10 --dry-run
   schwab dr                    # doctor diagnostics
 """,
     )
-    parser.add_argument(
-        "--version", "-V", action="version", version=f"%(prog)s {__version__}"
-    )
+    parser.add_argument("--version", "-V", action="version", version=f"%(prog)s {__version__}")
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -179,8 +187,10 @@ Examples:
     movers_parser.add_argument("--losers", action="store_true", help="Losers only")
     movers_parser.add_argument("--count", type=int, default=5, help="Number to show")
     movers_parser.add_argument(
-        "--index", default="SPX", choices=["SPX", "NASDAQ", "NYSE", "DJI"],
-        help="Index to show movers for (default: SPX)"
+        "--index",
+        default="SPX",
+        choices=["SPX", "NASDAQ", "NYSE", "DJI"],
+        help="Index to show movers for (default: SPX)",
     )
 
     subparsers.add_parser(
@@ -197,9 +207,7 @@ Examples:
     )
     fundamentals_parser.add_argument("symbol", help="Symbol to look up")
 
-    iv_parser = subparsers.add_parser(
-        "iv", help="Show implied volatility", parents=[common_parser]
-    )
+    iv_parser = subparsers.add_parser("iv", help="Show implied volatility", parents=[common_parser])
     iv_parser.add_argument("symbol", help="Symbol to look up")
 
     dividends_parser = subparsers.add_parser(
@@ -223,23 +231,69 @@ Examples:
 
     # Admin commands
     subparsers.add_parser("auth", help="Check authentication", parents=[common_parser])
-    subparsers.add_parser(
-        "doctor", aliases=["dr"], help="Run diagnostics", parents=[common_parser]
-    )
+    subparsers.add_parser("doctor", aliases=["dr"], help="Run diagnostics", parents=[common_parser])
     subparsers.add_parser("accounts", help="List accounts", parents=[common_parser])
+
+    history_parser = subparsers.add_parser(
+        "history", aliases=["hist"], help="Query stored snapshot history", parents=[common_parser]
+    )
+    history_parser.add_argument(
+        "--dataset",
+        choices=["runs", "portfolio", "positions", "market"],
+        default="runs",
+        help="History dataset to query (default: runs)",
+    )
+    history_parser.add_argument("--limit", type=int, default=20, help="Rows to return")
+    history_parser.add_argument(
+        "--since", help="Only include rows since YYYY-MM-DD or ISO timestamp"
+    )
+    history_parser.add_argument("--symbol", help="Filter position history by symbol")
+    history_parser.add_argument("--account", help="Filter position history by account label/alias")
+    history_parser.add_argument(
+        "--import",
+        dest="import_paths",
+        action="append",
+        metavar="PATH",
+        help=(
+            "Import existing JSON history from a file or directory. "
+            "Repeat for multiple paths; omit PATH to import default snapshot/report dirs."
+        ),
+    )
+    history_parser.add_argument(
+        "--import-defaults",
+        action="store_true",
+        help="Import default snapshot/report directories into the history database",
+    )
+
+    query_parser = subparsers.add_parser(
+        "query", help="Run read-only SQL against the history database", parents=[common_parser]
+    )
+    query_parser.add_argument("sql", help="Read-only SQL query")
 
     # Report commands
     report_parser = subparsers.add_parser(
-        "report", help="Generate portfolio report", parents=[common_parser]
+        "report", help="Export canonical snapshot JSON", parents=[common_parser]
     )
-    report_parser.add_argument("--output", "-o", help="Output path")
     report_parser.add_argument(
-        "--no-market", action="store_true", help="Skip market data"
+        "--output",
+        "-o",
+        nargs="?",
+        const="",
+        help="Optional output path; omit value to use the default report location",
     )
+    report_parser.add_argument("--no-market", action="store_true", help="Skip market data")
 
-    subparsers.add_parser(
-        "snapshot", aliases=["snap"], help="Get data snapshot", parents=[common_parser]
+    snapshot_parser = subparsers.add_parser(
+        "snapshot", aliases=["snap"], help="Capture canonical snapshot", parents=[common_parser]
     )
+    snapshot_parser.add_argument(
+        "--output",
+        "-o",
+        nargs="?",
+        const="",
+        help="Optional output path; omit value to use the default report location",
+    )
+    snapshot_parser.add_argument("--no-market", action="store_true", help="Skip market data")
 
     # Trade commands
     buy_parser = subparsers.add_parser("buy", help="Buy shares", parents=[common_parser])
@@ -248,7 +302,9 @@ Examples:
     )
     buy_parser.add_argument("--limit", type=float, help="Limit price")
     buy_parser.add_argument("--dry-run", action="store_true", help="Preview only")
-    buy_parser.add_argument("--live", action="store_true", help="Enable live trading for this command")
+    buy_parser.add_argument(
+        "--live", action="store_true", help="Enable live trading for this command"
+    )
     buy_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
 
     sell_parser = subparsers.add_parser("sell", help="Sell shares", parents=[common_parser])
@@ -257,10 +313,20 @@ Examples:
     )
     sell_parser.add_argument("--limit", type=float, help="Limit price")
     sell_parser.add_argument("--stop", type=float, help="Stop price (triggers sell when reached)")
-    sell_parser.add_argument("--trailing-stop", type=float, dest="trailing_stop", metavar="PCT", help="Trailing stop percentage from mark")
+    sell_parser.add_argument(
+        "--trailing-stop",
+        type=float,
+        dest="trailing_stop",
+        metavar="PCT",
+        help="Trailing stop percentage from mark",
+    )
     sell_parser.add_argument("--dry-run", action="store_true", help="Preview only")
-    sell_parser.add_argument("--live", action="store_true", help="Enable live trading for this command")
-    sell_parser.add_argument("--all", action="store_true", dest="sell_all", help="Sell entire position")
+    sell_parser.add_argument(
+        "--live", action="store_true", help="Enable live trading for this command"
+    )
+    sell_parser.add_argument(
+        "--all", action="store_true", dest="sell_all", help="Sell entire position"
+    )
     sell_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
 
     orders_parser = subparsers.add_parser(
@@ -346,6 +412,21 @@ def main(args: list | None = None) -> None:
         cmd_doctor(output_mode=output_mode)
     elif parsed.command == "accounts":
         cmd_accounts(output_mode=output_mode)
+    elif parsed.command == "history":
+        import_paths = getattr(parsed, "import_paths", None)
+        if getattr(parsed, "import_defaults", False):
+            import_paths = []
+        cmd_history(
+            output_mode=output_mode,
+            dataset=getattr(parsed, "dataset", "runs"),
+            limit=getattr(parsed, "limit", 20),
+            since=getattr(parsed, "since", None),
+            symbol=getattr(parsed, "symbol", None),
+            account=getattr(parsed, "account", None),
+            backfill_paths=import_paths,
+        )
+    elif parsed.command == "query":
+        cmd_query(parsed.sql, output_mode=output_mode)
     elif parsed.command == "report":
         cmd_report(
             output_mode=output_mode,
@@ -353,7 +434,11 @@ def main(args: list | None = None) -> None:
             include_market=not getattr(parsed, "no_market", False),
         )
     elif parsed.command == "snapshot":
-        cmd_snapshot(output_mode=output_mode)
+        cmd_snapshot(
+            output_mode=output_mode,
+            output_path=getattr(parsed, "output", None),
+            include_market=not getattr(parsed, "no_market", False),
+        )
     elif parsed.command == "buy":
         cmd_buy(
             getattr(parsed, "args", []),

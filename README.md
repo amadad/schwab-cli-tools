@@ -96,14 +96,28 @@ schwab dr                  # Alias
 schwab accounts            # List configured accounts
 ```
 
-### Report Commands
+### History Commands
 
 ```bash
-schwab report              # Generate portfolio report
+schwab history                               # Recent snapshot runs
+schwab hist --dataset portfolio --limit 10   # Portfolio history (alias)
+schwab history --dataset positions --symbol AAPL
+schwab history --dataset market              # Market context history
+schwab history --import-defaults             # Backfill private/snapshots + private/reports
+schwab query "SELECT * FROM portfolio_history LIMIT 5"
+```
+
+### Snapshot / Export Commands
+
+```bash
+schwab snapshot            # Capture canonical snapshot and store in SQLite
+schwab snap --json         # Primary automation path (alias)
+schwab snapshot --output   # Also write JSON to default report location
+schwab snapshot -o ./out.json
+schwab snapshot --no-market
+schwab report              # Export-oriented wrapper around snapshot
 schwab report -o ./out.json
-schwab report --no-market  # Skip market data
-schwab snapshot            # Complete data snapshot
-schwab snap --json         # For automation (alias)
+schwab report --no-market
 ```
 
 ### Trade Commands
@@ -133,6 +147,7 @@ schwab ord                                   # Alias
 | fundamentals | fund |
 | dividends | div |
 | doctor | dr |
+| history | hist |
 | snapshot | snap |
 | orders | ord |
 
@@ -176,6 +191,12 @@ export SCHWAB_CLI_DATA_DIR=~/.schwab-cli-tools
 # Report directory
 export SCHWAB_REPORT_DIR=~/.schwab-cli-tools/reports
 
+# History database (defaults to ./private/history/schwab_history.db when available)
+export SCHWAB_HISTORY_DB_PATH=~/.schwab-cli-tools/history/schwab_history.db
+
+# Optional manual accounts file for holistic household totals
+export SCHWAB_MANUAL_ACCOUNTS_PATH=./private/notes/manual_accounts.json
+
 # Token paths (override data dir)
 export SCHWAB_TOKEN_PATH=~/.schwab-cli-tools/tokens/schwab_token.json
 export SCHWAB_MARKET_TOKEN_PATH=~/.schwab-cli-tools/tokens/schwab_market_token.json
@@ -192,7 +213,7 @@ Create `config/accounts.json` from the template:
 cp config/accounts.template.json config/accounts.json
 ```
 
-See `config/CLAUDE.md` for the JSON schema and field documentation.
+See [`docs/account-config.md`](docs/account-config.md) for the account config schema and field documentation.
 
 ## JSON Response Envelope
 
@@ -211,7 +232,35 @@ All `--json` output follows this schema:
 
 Errors set `success: false` and populate `error`.
 
+## History Database
+
+`snapshot` is the primary capture path, and both `snapshot` and `report` persist
+canonical snapshots to SQLite. See [`docs/history.md`](docs/history.md) for the
+canonical data model, agent workflow, view definitions, and import semantics.
+
+When running inside this repo, the history database defaults to
+`./private/history/schwab_history.db`. The entire `private/` tree is gitignored,
+so the database stays local and must not be committed.
+
+The database exposes agent-friendly views:
+
+- `portfolio_history`
+- `account_history`
+- `position_history`
+- `market_history`
+
+Example:
+
+```bash
+schwab query "SELECT observed_at, total_value, manual_value FROM portfolio_history ORDER BY observed_at DESC LIMIT 10"
+```
+
+Use `schwab history --import-defaults` to backfill legacy `private/snapshots/*.json`
+and `private/reports/*.json` into the database.
+
 ## Architecture
+
+See [`docs/architecture.md`](docs/architecture.md) for module boundaries and extension points.
 
 ```
 src/schwab_client/
@@ -222,16 +271,22 @@ src/schwab_client/
 │   └── commands/           # Command handlers
 │       ├── portfolio.py    # portfolio, positions, balance, allocation
 │       ├── market.py       # vix, indices, sectors, movers, etc.
+│       ├── history.py      # history, query
 │       ├── trade.py        # buy, sell, orders
 │       ├── admin.py        # auth, doctor, accounts
 │       └── report.py       # report, snapshot
+├── _client/                # Internal client mixins / shared helpers
+├── _history/               # Internal history schema + normalization + store
 ├── auth.py                 # Portfolio API authentication
 ├── market_auth.py          # Market API authentication
-└── client.py               # SchwabClientWrapper
+├── history.py              # Public SQLite history API
+├── snapshot.py             # Canonical snapshot collection
+└── client.py               # Public SchwabClientWrapper surface
 
 src/core/                   # Pure business logic
 ├── portfolio_service.py    # Portfolio aggregation
 ├── market_service.py       # Market data processing
+├── snapshot_service.py     # Manual-account merge + snapshot helpers
 └── errors.py               # Custom exceptions
 
 config/
@@ -239,6 +294,10 @@ config/
 ├── accounts.template.json  # Template (tracked)
 ├── accounts.json           # Your config (gitignored)
 └── secure_account_config.py
+
+docs/
+├── history.md              # Canonical snapshot/history/query reference
+└── account-config.md       # Canonical account config reference
 ```
 
 ## Development

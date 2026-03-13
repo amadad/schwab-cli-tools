@@ -180,7 +180,7 @@ def authenticate_market_data_manual(
     print("  4. Your browser will show 'Can't connect to server' or similar")
     print("     THIS IS EXPECTED - don't worry!")
     print()
-    print(f"  5. Copy the FULL URL from your browser's address bar")
+    print("  5. Copy the FULL URL from your browser's address bar")
     print(f"     (starts with {callback_url}/?code=...)")
     print("  6. Paste it back here")
     print()

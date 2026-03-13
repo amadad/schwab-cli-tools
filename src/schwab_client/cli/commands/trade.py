@@ -52,9 +52,7 @@ def parse_trade_args(
             symbol = args[0]
             quantity_raw = None
         else:
-            raise ConfigError(
-                f"Usage: schwab {command} [ACCOUNT] SYMBOL --all"
-            )
+            raise ConfigError(f"Usage: schwab {command} [ACCOUNT] SYMBOL --all")
     elif len(args) == 3:
         account, symbol, quantity_raw = args
     elif len(args) == 2:
@@ -115,8 +113,7 @@ def parse_orders_account(args: list[str]) -> str:
         account = None
     else:
         raise ConfigError(
-            f"Usage: schwab orders [ACCOUNT] "
-            f"(set {DEFAULT_ACCOUNT_ENV_VAR} to omit ACCOUNT)."
+            f"Usage: schwab orders [ACCOUNT] " f"(set {DEFAULT_ACCOUNT_ENV_VAR} to omit ACCOUNT)."
         )
     return resolve_account_alias(account)
 
@@ -135,7 +132,12 @@ def is_interactive_tty() -> bool:
 
 
 def ensure_trade_confirmation(
-    *, output_mode: str, auto_confirm: bool, dry_run: bool, non_interactive: bool, live: bool = False
+    *,
+    output_mode: str,
+    auto_confirm: bool,
+    dry_run: bool,
+    non_interactive: bool,
+    live: bool = False,
 ) -> None:
     """Enforce confirmation rules for trade commands.
 
@@ -169,8 +171,7 @@ def ensure_trade_confirmation(
 
     if non_interactive:
         raise ConfigError(
-            "Non-interactive mode cannot execute live trades. "
-            "Use --dry-run to preview orders."
+            "Non-interactive mode cannot execute live trades. " "Use --dry-run to preview orders."
         )
 
 
@@ -296,9 +297,13 @@ def execute_trade(
 
         # Generate preview
         if trailing_stop_percent is not None and action == "sell":
-            preview = client.sell_trailing_stop(account, symbol, quantity, trailing_stop_percent, dry_run=True)
+            preview = client.sell_trailing_stop(
+                account, symbol, quantity, trailing_stop_percent, dry_run=True
+            )
         elif stop_price is not None and limit_price is not None and action == "sell":
-            preview = client.sell_stop_limit(account, symbol, quantity, stop_price, limit_price, dry_run=True)
+            preview = client.sell_stop_limit(
+                account, symbol, quantity, stop_price, limit_price, dry_run=True
+            )
         elif stop_price is not None and action == "sell":
             preview = client.sell_stop(account, symbol, quantity, stop_price, dry_run=True)
         elif action == "buy":
@@ -332,7 +337,17 @@ def execute_trade(
                     data={"preview": preview, "submitted": False, "dry_run": True},
                 )
             else:
-                print(format_order_preview(action_upper, preview, limit_price, account_label, dry_run=True, stop_price=stop_price, trailing_stop_percent=trailing_stop_percent))
+                print(
+                    format_order_preview(
+                        action_upper,
+                        preview,
+                        limit_price,
+                        account_label,
+                        dry_run=True,
+                        stop_price=stop_price,
+                        trailing_stop_percent=trailing_stop_percent,
+                    )
+                )
             return
 
         # Enforce safety rules for live trades
@@ -345,7 +360,16 @@ def execute_trade(
         )
 
         # Show preview
-        print(format_order_preview(action_upper, preview, limit_price, account_label, stop_price=stop_price, trailing_stop_percent=trailing_stop_percent))
+        print(
+            format_order_preview(
+                action_upper,
+                preview,
+                limit_price,
+                account_label,
+                stop_price=stop_price,
+                trailing_stop_percent=trailing_stop_percent,
+            )
+        )
 
         # Require explicit confirmation
         confirmed = require_trade_confirmation(

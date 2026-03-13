@@ -9,7 +9,6 @@ from typing import Any
 
 import pytest
 
-
 # JSON Schema for CLI response envelope
 ENVELOPE_SCHEMA = {
     "type": "object",
@@ -140,9 +139,7 @@ def assert_json_success(result: CLIResult, command: str | None = None) -> dict[s
     return result.json_data
 
 
-def assert_json_error(
-    result: CLIResult, expected_type: str | None = None
-) -> dict[str, Any]:
+def assert_json_error(result: CLIResult, expected_type: str | None = None) -> dict[str, Any]:
     """Assert CLI result is an error JSON response.
 
     Args:
@@ -257,6 +254,7 @@ def temp_tokens_dir(tmp_path):
 # =============================================================================
 # Mock Client Fixtures
 # =============================================================================
+
 
 @pytest.fixture
 def mock_portfolio_summary():

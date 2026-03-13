@@ -2,12 +2,11 @@
 Portfolio commands: portfolio, positions, balance, allocation.
 """
 
-from typing import Any
-
 import httpx
 
 from src.core.errors import PortfolioError
 
+from ...snapshot import sanitize_positions
 from ..context import get_client
 from ..output import (
     format_currency,
@@ -16,16 +15,6 @@ from ..output import (
     handle_cli_error,
     print_json_response,
 )
-
-
-def _strip_account_numbers(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove raw account numbers from position data."""
-    sanitized = []
-    for pos in positions:
-        entry = dict(pos)
-        entry.pop("account_number", None)
-        sanitized.append(entry)
-    return sanitized
 
 
 def cmd_portfolio(
@@ -40,10 +29,10 @@ def cmd_portfolio(
         summary = client.get_portfolio_summary()
 
         # Sanitize positions
-        summary["positions"] = _strip_account_numbers(summary.get("positions", []))
+        summary["positions"] = sanitize_positions(summary.get("positions", []))
 
         if output_mode == "json":
-            print_json_response(command, data=summary)
+            print_json_response(command, data={"summary": summary})
             return
 
         # Text output
@@ -68,7 +57,9 @@ def cmd_portfolio(
                 value = pos.get("market_value", 0)
                 pct = pos.get("percentage", 0)
                 account = pos.get("account", "")
-                print(f"  {symbol:8s} {qty:>8.2f} {format_currency(value):>14s}  {pct:>5.1f}%  [{account}]")
+                print(
+                    f"  {symbol:8s} {qty:>8.2f} {format_currency(value):>14s}  {pct:>5.1f}%  [{account}]"
+                )
 
             if len(summary["positions"]) > 20:
                 print(f"  ... and {len(summary['positions']) - 20} more")
@@ -175,25 +166,32 @@ def cmd_allocation(*, output_mode: str = "text") -> None:
 
         print(format_header("PORTFOLIO ALLOCATION"))
 
-        # Asset class breakdown
-        if allocation.get("by_asset_class"):
-            print("\n  BY ASSET CLASS:")
-            for asset_class, data in allocation["by_asset_class"].items():
+        by_asset_type = allocation.get("by_asset_type") or allocation.get("by_asset_class")
+        if by_asset_type:
+            print("\n  BY ASSET TYPE:")
+            for asset_type, data in by_asset_type.items():
                 pct = data.get("percentage", 0)
                 value = data.get("value", 0)
-                print(f"    {asset_class:15s} {pct:>6.1f}%  {format_currency(value)}")
+                print(f"    {asset_type:15s} {pct:>6.1f}%  {format_currency(value)}")
 
-        # Top holdings
-        if allocation.get("top_holdings"):
+        top_holdings = allocation.get("top_holdings_pct") or allocation.get("top_holdings")
+        if top_holdings:
             print("\n  TOP HOLDINGS:")
-            for holding in allocation["top_holdings"][:10]:
+            for holding in top_holdings[:10]:
                 symbol = holding.get("symbol", "???")
                 pct = holding.get("percentage", 0)
                 value = holding.get("value", 0)
                 print(f"    {symbol:8s} {pct:>6.1f}%  {format_currency(value)}")
 
-        # Concentration warnings
-        if allocation.get("concentration_warnings"):
+        concentration_risks = allocation.get("concentration_risks")
+        if concentration_risks:
+            print("\n  CONCENTRATION RISKS:")
+            for risk in concentration_risks:
+                print(
+                    f"    - {risk.get('symbol', '???')}: {risk.get('percentage', 0):.1f}% "
+                    f"({risk.get('risk_level', 'Unknown')})"
+                )
+        elif allocation.get("concentration_warnings"):
             print("\n  CONCENTRATION WARNINGS:")
             for warning in allocation["concentration_warnings"]:
                 print(f"    - {warning}")
@@ -202,5 +200,3 @@ def cmd_allocation(*, output_mode: str = "text") -> None:
 
     except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
-
-

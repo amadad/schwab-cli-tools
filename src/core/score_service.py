@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 # 15 dimensions, scored 1-5. Max score = 75.
 # PASS >= 60, WATCH 45-59, SELL < 45
 DIMENSIONS = [
@@ -41,14 +40,17 @@ def score_from_fundamentals(symbol: str, fundamentals: dict[str, Any]) -> dict[s
     roe = fundamentals.get("returnOnEquity") or 0
     roic = fundamentals.get("returnOnInvestment") or 0
     div_yield = fundamentals.get("dividendYield") or 0
-    payout_ratio = fundamentals.get("dividendPayoutRatio") or 0
     debt_equity = fundamentals.get("totalDebtToEquity") or 0
-    market_cap = fundamentals.get("marketCap") or 0
-    beta = fundamentals.get("beta") or 1.0
 
     # Qualitative dimensions — need manual review
-    for dim in ["business_model", "management", "competitive_advantage",
-                 "industry_attractiveness", "main_risks", "outlook"]:
+    for dim in [
+        "business_model",
+        "management",
+        "competitive_advantage",
+        "industry_attractiveness",
+        "main_risks",
+        "outlook",
+    ]:
         scores[dim] = {"score": None, "note": "Requires qualitative analysis"}
 
     # Balance Sheet (quantifiable)
@@ -102,7 +104,10 @@ def score_from_fundamentals(symbol: str, fundamentals: dict[str, Any]) -> dict[s
         p_score = 2
     else:
         p_score = 1
-    scores["profitability"] = {"score": p_score, "note": f"Margin: {profit_margin:.1f}%, ROE: {roe:.1f}%"}
+    scores["profitability"] = {
+        "score": p_score,
+        "note": f"Margin: {profit_margin:.1f}%, ROE: {roe:.1f}%",
+    }
 
     # Historical Growth
     if rev_growth_5y > 15 and eps_growth_5y > 15:

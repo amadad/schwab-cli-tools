@@ -1,79 +1,69 @@
-"""
-Report commands: report, snapshot.
-"""
+"""Snapshot commands: ``snapshot`` and ``report``."""
+
+from __future__ import annotations
 
 import json
-import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import httpx
 
-from config.secure_account_config import secure_config
 from src.core.errors import PortfolioError
-from src.core.market_service import (
-    get_market_indices,
-    get_market_signals,
-    get_sector_performance,
-    get_vix,
-)
-from src.core.portfolio_service import (
-    analyze_allocation,
-    build_account_balances,
-    build_portfolio_summary,
-)
 
-from ...auth import resolve_data_dir
-from ...client import MONEY_MARKET_SYMBOLS
+from ... import paths as path_utils
+from ...history import HistoryStore
+from ...snapshot import collect_snapshot
 from ..context import get_cached_market_client, get_client
 from ..output import format_currency, format_header, handle_cli_error, print_json_response
 
-REPORT_DIR_ENV_VAR = "SCHWAB_REPORT_DIR"
+REPORT_DIR_ENV_VAR = path_utils.REPORT_DIR_ENV_VAR
+resolve_report_dir = path_utils.resolve_report_dir
+resolve_report_path = path_utils.resolve_report_path
 
 
-def resolve_report_dir() -> Path:
-    """Resolve the directory where reports are stored."""
-    env_dir = os.getenv(REPORT_DIR_ENV_VAR)
-    if env_dir:
-        return Path(env_dir).expanduser()
-    return resolve_data_dir() / "reports"
+def _build_snapshot(*, include_market: bool) -> dict:
+    """Collect a canonical snapshot, tolerating missing market credentials."""
+    client = get_client()
+
+    market_client = None
+    market_error: dict[str, str] | None = None
+    if include_market:
+        try:
+            market_client = get_cached_market_client()
+        except Exception as exc:
+            market_error = {"component": "market", "message": str(exc)}
+            include_market = False
+
+    snapshot = collect_snapshot(
+        client,
+        include_market=include_market,
+        market_client=market_client,
+    )
+
+    if market_error:
+        snapshot.setdefault("errors", []).append(market_error)
+
+    return snapshot
 
 
-def resolve_report_path(output_path: str | None, *, timestamp: datetime | None = None) -> Path:
-    """Resolve the report output path."""
-    if output_path:
-        path = Path(output_path).expanduser()
-    else:
-        ts = timestamp or datetime.now()
-        path = resolve_report_dir() / f"report-{ts.strftime('%Y%m%d-%H%M%S')}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
+def _capture_snapshot(*, include_market: bool, source_command: str) -> dict:
+    """Collect and persist a canonical snapshot."""
+    snapshot = _build_snapshot(include_market=include_market)
+    history = HistoryStore().store_snapshot(snapshot, source_command=source_command)
+    snapshot["history"] = history
+    return snapshot
 
 
-def get_account_display_name(account_number: str) -> str:
-    """Get friendly display name for account."""
-    label = secure_config.get_account_label(account_number)
-    if label:
-        return label
-    if len(account_number) > 4:
-        return f"Account (...{account_number[-4:]})"
-    return f"Account ({account_number})"
-
-
-def sanitize_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Sanitize positions by masking account numbers."""
-    sanitized: list[dict[str, Any]] = []
-    for pos in positions:
-        entry = dict(pos)
-        account_number = entry.pop("account_number", None)
-        if account_number:
-            entry["account_number_masked"] = secure_config.mask_account_number(
-                str(account_number)
-            )
-            entry["account_number_last4"] = str(account_number)[-4:]
-        sanitized.append(entry)
-    return sanitized
+def _write_snapshot_artifact(
+    snapshot: dict,
+    output_path: str | None,
+    *,
+    timestamp: datetime | None = None,
+) -> Path:
+    """Write a snapshot JSON artifact to disk and return its path."""
+    report_path = resolve_report_path(output_path, timestamp=timestamp)
+    report_path.write_text(json.dumps(snapshot, indent=2))
+    return report_path
 
 
 def cmd_report(
@@ -82,182 +72,117 @@ def cmd_report(
     output_path: str | None = None,
     include_market: bool = True,
 ) -> None:
-    """Generate a portfolio report and save it to disk."""
+    """Generate a canonical portfolio snapshot and save it to disk.
+
+    ``report`` is the export-oriented wrapper around the canonical ``snapshot``
+    pipeline. The snapshot is still persisted to SQLite either way.
+    """
     command = "report"
     try:
         timestamp = datetime.now()
-        client = get_client()
-        accounts = client.get_all_accounts_full()
-
-        summary = build_portfolio_summary(accounts, get_account_display_name, MONEY_MARKET_SYMBOLS)
-        summary["positions"] = sanitize_positions(summary.get("positions", []))
-
-        balances = build_account_balances(accounts, get_account_display_name, MONEY_MARKET_SYMBOLS)
-        allocation = analyze_allocation(accounts)
-
-        report = {
-            "generated_at": timestamp.isoformat(),
-            "portfolio": {
-                "summary": summary,
-                "balances": balances,
-                "allocation": allocation,
-            },
-        }
-
-        warnings: list[str] = []
-        if include_market:
-            try:
-                market_client = get_cached_market_client()
-                report["market"] = get_market_signals(market_client)
-            except Exception as exc:
-                warnings.append("market_data_unavailable")
-                report["market_error"] = str(exc)
-
-        if warnings:
-            report["warnings"] = warnings
-
-        report_path = resolve_report_path(output_path, timestamp=timestamp)
-        report_path.write_text(json.dumps(report, indent=2))
+        snapshot = _capture_snapshot(include_market=include_market, source_command=command)
+        report_path = _write_snapshot_artifact(snapshot, output_path, timestamp=timestamp)
 
         if output_mode == "json":
-            print_json_response(command, data={"report_path": str(report_path), "report": report})
+            print_json_response(
+                command,
+                data={
+                    "report_path": str(report_path),
+                    "history": snapshot["history"],
+                    "snapshot": snapshot,
+                },
+            )
             return
+
+        summary = snapshot.get("portfolio", {}).get("summary", {})
+        api_accounts = snapshot.get("portfolio", {}).get("api_accounts", [])
 
         print(format_header("REPORT SAVED"))
         print(f"  Path:        {report_path}")
-        print(f"  Total Value: {format_currency(summary['total_value'])}")
-        print(f"  Total Cash:  {format_currency(summary['total_cash'])}")
-        print(f"  Positions:   {summary['position_count']}")
-        if warnings:
-            print(f"  Warnings:    {', '.join(warnings)}")
+        print(f"  Snapshot ID: {snapshot['history']['snapshot_id']}")
+        print(f"  Total Value: {format_currency(summary.get('total_value'))}")
+        print(f"  Total Cash:  {format_currency(summary.get('total_cash'))}")
+        print(f"  Positions:   {summary.get('position_count', 0)}")
         print()
 
-        if balances:
+        if api_accounts:
             print(format_header("ACCOUNT VALUES"))
-            for acc in balances:
+            for account in api_accounts:
                 print(
-                    f"  {acc['account']}: {format_currency(acc['total_value'])}  "
-                    f"(cash {format_currency(acc['cash_balance'])})"
+                    f"  {account['account']}: {format_currency(account.get('total_value'))}  "
+                    f"(cash {format_currency(account.get('total_cash'))})"
                 )
+            print()
+
+        if snapshot.get("errors"):
+            print(format_header("WARNINGS"))
+            for error in snapshot["errors"]:
+                print(f"  - {error.get('component')}: {error.get('message')}")
             print()
 
     except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
-def cmd_snapshot(*, output_mode: str = "text") -> None:
-    """Get complete data snapshot for external consumers.
-
-    Aggregates portfolio, market, and position data into a single JSON payload.
-    Useful for clawdbot, external scripts, and automated reports.
-    """
+def cmd_snapshot(
+    *,
+    output_mode: str = "text",
+    output_path: str | None = None,
+    include_market: bool = True,
+) -> None:
+    """Capture a canonical snapshot and persist it to the history database."""
     command = "snapshot"
     try:
-        snapshot: dict[str, Any] = {
-            "generated_at": datetime.now().isoformat(),
-            "errors": [],
-        }
-
-        # Use cached client for all portfolio operations
-        client = get_client()
-
-        # Portfolio data
-        try:
-            summary = client.get_portfolio_summary()
-            summary["positions"] = sanitize_positions(summary.get("positions", []))
-            snapshot["portfolio"] = {"summary": summary}
-        except Exception as e:
-            snapshot["portfolio"] = None
-            snapshot["errors"].append(f"portfolio: {e}")
-
-        # Positions
-        try:
-            positions = client.get_positions(None)
-            snapshot["positions"] = {"positions": positions}
-        except Exception as e:
-            snapshot["positions"] = None
-            snapshot["errors"].append(f"positions: {e}")
-
-        # Balances
-        try:
-            balances = client.get_account_balances()
-            snapshot["balances"] = {"balances": balances}
-        except Exception as e:
-            snapshot["balances"] = None
-            snapshot["errors"].append(f"balances: {e}")
-
-        # Allocation
-        try:
-            allocation = client.analyze_allocation()
-            snapshot["allocation"] = allocation
-        except Exception as e:
-            snapshot["allocation"] = None
-            snapshot["errors"].append(f"allocation: {e}")
-
-        # Market data (use cached market client)
-        try:
-            market_client = get_cached_market_client()
-            snapshot["market"] = get_market_signals(market_client)
-        except Exception as e:
-            snapshot["market"] = None
-            snapshot["errors"].append(f"market: {e}")
-
-        # VIX
-        try:
-            market_client = get_cached_market_client()
-            snapshot["vix"] = get_vix(market_client)
-        except Exception as e:
-            snapshot["vix"] = None
-            snapshot["errors"].append(f"vix: {e}")
-
-        # Indices
-        try:
-            market_client = get_cached_market_client()
-            snapshot["indices"] = get_market_indices(market_client)
-        except Exception as e:
-            snapshot["indices"] = None
-            snapshot["errors"].append(f"indices: {e}")
-
-        # Sectors
-        try:
-            market_client = get_cached_market_client()
-            snapshot["sectors"] = get_sector_performance(market_client)
-        except Exception as e:
-            snapshot["sectors"] = None
-            snapshot["errors"].append(f"sectors: {e}")
-
-        # Clean up empty errors list
-        if not snapshot["errors"]:
-            del snapshot["errors"]
+        snapshot = _capture_snapshot(include_market=include_market, source_command=command)
+        written_path = (
+            _write_snapshot_artifact(snapshot, output_path) if output_path is not None else None
+        )
 
         if output_mode == "json":
-            print_json_response(command, data=snapshot)
+            if written_path is None:
+                print_json_response(command, data=snapshot)
+            else:
+                print_json_response(
+                    command,
+                    data={
+                        "snapshot": snapshot,
+                        "output_path": str(written_path),
+                    },
+                )
             return
 
-        # Text mode summary
+        summary = snapshot.get("portfolio", {}).get("summary", {})
+        market = snapshot.get("market", {}) or {}
+        market_signals = market.get("signals") or {}
+        vix = market.get("vix") or {}
+        history = snapshot["history"]
+
         print(format_header("DATA SNAPSHOT"))
-        print(f"  Generated: {snapshot['generated_at']}")
+        print(f"  Generated:   {snapshot['generated_at']}")
+        print(f"  Snapshot ID: {history['snapshot_id']}")
+        print(f"  DB Path:     {history['db_path']}")
+        if written_path is not None:
+            print(f"  Output:      {written_path}")
 
-        if snapshot.get("portfolio"):
-            summary = snapshot["portfolio"].get("summary", {})
-            print(f"\n  Portfolio: {format_currency(summary.get('total_value', 0))}")
-            print(f"    Cash:      {format_currency(summary.get('total_cash', 0))}")
-            print(f"    Positions: {summary.get('position_count', 0)}")
+        print(f"\n  Portfolio: {format_currency(summary.get('total_value'))}")
+        print(f"    Cash:      {format_currency(summary.get('total_cash'))}")
+        print(f"    Positions: {summary.get('position_count', 0)}")
+        print(
+            f"    Accounts:  {summary.get('api_account_count', 0)} API + "
+            f"{summary.get('manual_account_count', 0)} manual"
+        )
 
-        if snapshot.get("market"):
-            market = snapshot["market"]
-            print(f"\n  Market: {market.get('overall', 'N/A')}")
-            print(f"    Recommendation: {market.get('recommendation', 'N/A')}")
+        if market_signals:
+            print(f"\n  Market: {market_signals.get('overall', 'N/A')}")
+            print(f"    Recommendation: {market_signals.get('recommendation', 'N/A')}")
 
-        if snapshot.get("vix"):
-            vix = snapshot["vix"]
+        if vix:
             print(f"\n  VIX: {vix.get('vix', 0):.2f} ({vix.get('signal', 'N/A')})")
 
         if snapshot.get("errors"):
             print(f"\n  Errors: {len(snapshot['errors'])}")
-            for err in snapshot["errors"]:
-                print(f"    - {err}")
-
+            for error in snapshot["errors"]:
+                print(f"    - {error.get('component')}: {error.get('message')}")
         print()
 
     except (PortfolioError, httpx.HTTPStatusError) as exc:

@@ -90,5 +90,3 @@ def test_analyze_allocation_outputs_expected_keys():
     assert "by_asset_type" in analysis
     assert "concentration_risks" in analysis
     assert len(analysis["top_holdings_pct"]) >= 2
-
-

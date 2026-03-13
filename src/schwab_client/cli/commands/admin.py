@@ -129,9 +129,7 @@ def cmd_doctor(*, output_mode: str = "text") -> None:
         print(f"  Data directory: {data_dir}")
 
         print("\n  Portfolio API:")
-        print(
-            f"    Credentials: {'OK' if data['portfolio']['credentials_present'] else 'MISSING'}"
-        )
+        print(f"    Credentials: {'OK' if data['portfolio']['credentials_present'] else 'MISSING'}")
         print(
             f"    Token: {'present' if portfolio_token.get('exists') else 'missing'}"
             f" ({'valid' if portfolio_token.get('valid') else 'EXPIRED'})"
@@ -150,9 +148,7 @@ def cmd_doctor(*, output_mode: str = "text") -> None:
         print(f"    Token path: {portfolio_token_path}")
 
         print("\n  Market API:")
-        print(
-            f"    Credentials: {'OK' if data['market']['credentials_present'] else 'MISSING'}"
-        )
+        print(f"    Credentials: {'OK' if data['market']['credentials_present'] else 'MISSING'}")
         print(
             f"    Token: {'present' if market_token.get('exists') else 'missing'}"
             f" ({'valid' if market_token.get('valid') else 'EXPIRED'})"
@@ -200,7 +196,9 @@ def cmd_accounts(*, output_mode: str = "text") -> None:
                     "alias": alias,
                     "label": info.label,
                     "notes": info.notes,
-                    "account_number_last4": info.account_number[-4:] if info.account_number else None,
+                    "account_number_last4": (
+                        info.account_number[-4:] if info.account_number else None
+                    ),
                 }
                 for alias, info in accounts.items()
             ]

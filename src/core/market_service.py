@@ -167,7 +167,7 @@ def _cumulative_return(candles: list[dict], days: int) -> float:
     """Calculate cumulative return over the last N trading days from price candles."""
     if len(candles) < days + 1:
         return 0.0
-    recent = candles[-(days + 1):]
+    recent = candles[-(days + 1) :]
     start_price = recent[0].get("close", 0)
     end_price = recent[-1].get("close", 0)
     if start_price <= 0:
@@ -304,7 +304,11 @@ def get_implied_volatility(client, symbol: str) -> dict[str, Any]:
                 # Take the strike closest to ATM
                 first_strike_options = next(iter(first_exp.values()), [])
                 if first_strike_options:
-                    opt = first_strike_options[0] if isinstance(first_strike_options, list) else first_strike_options
+                    opt = (
+                        first_strike_options[0]
+                        if isinstance(first_strike_options, list)
+                        else first_strike_options
+                    )
                     iv = opt.get("volatility", 0)
 
     # Normalize to percentage if needed (API sometimes returns decimal)
@@ -366,10 +370,7 @@ def get_market_hours(client, date_str: str | None = None) -> dict[str, Any]:
     """
     from datetime import date as date_type
 
-    check_date = (
-        date_type.fromisoformat(date_str) if date_str
-        else datetime.now().date()
-    )
+    check_date = date_type.fromisoformat(date_str) if date_str else datetime.now().date()
 
     resp = client.get_market_hours(
         client.MarketHours.Market.EQUITY,

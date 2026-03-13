@@ -108,7 +108,7 @@ class TokenManager:
                 # But refresh token is what matters - it's 7 days from creation
                 # Use creation_timestamp if available for refresh token expiry
                 if creation_time:
-                    if isinstance(creation_time, (int, float)):
+                    if isinstance(creation_time, int | float):
                         created = datetime.fromtimestamp(creation_time)
                     else:
                         created = datetime.fromisoformat(str(creation_time))
@@ -132,7 +132,9 @@ class TokenManager:
                     warning = "Token has EXPIRED. Run 'schwab-auth' to re-authenticate."
                     warning_level = "critical"
                 elif hours_remaining < 24:
-                    warning = f"Token expires in {hours_remaining:.1f} hours! Run 'schwab-auth' soon."
+                    warning = (
+                        f"Token expires in {hours_remaining:.1f} hours! Run 'schwab-auth' soon."
+                    )
                     warning_level = "critical"
                 elif hours_remaining < 48:
                     warning = f"Token expires in {days_remaining} days. Consider re-authenticating."
@@ -157,7 +159,7 @@ class TokenManager:
         # Fallback: try creation_timestamp alone (legacy format)
         if creation_time:
             try:
-                if isinstance(creation_time, (int, float)):
+                if isinstance(creation_time, int | float):
                     created = datetime.fromtimestamp(creation_time)
                 else:
                     created = datetime.fromisoformat(str(creation_time))
@@ -175,7 +177,9 @@ class TokenManager:
                     warning = "Token has EXPIRED. Run 'schwab-auth' to re-authenticate."
                     warning_level = "critical"
                 elif hours_remaining < 24:
-                    warning = f"Token expires in {hours_remaining:.1f} hours! Run 'schwab-auth' soon."
+                    warning = (
+                        f"Token expires in {hours_remaining:.1f} hours! Run 'schwab-auth' soon."
+                    )
                     warning_level = "critical"
                 elif hours_remaining < 48:
                     warning = f"Token expires in {days_remaining} days. Consider re-authenticating."

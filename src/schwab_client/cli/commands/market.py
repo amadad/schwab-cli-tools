@@ -5,7 +5,7 @@ Market commands: vix, indices, sectors, market, movers, futures, fundamentals, d
 from datetime import datetime, timedelta
 
 import httpx
-from schwab.client.base import BaseClient
+from schwab.client.base import BaseClient  # for Movers enum
 
 from config.secure_account_config import secure_config
 from src.core.errors import PortfolioError
@@ -84,8 +84,7 @@ def cmd_sectors(*, output_mode: str = "text") -> None:
         print(format_header("SECTOR PERFORMANCE"))
         for sector in data.get("sectors", []):
             print(
-                f"  {sector['symbol']:4s} {sector['sector']:24s} "
-                f"{sector['change_pct']:+.2f}%"
+                f"  {sector['symbol']:4s} {sector['sector']:24s} " f"{sector['change_pct']:+.2f}%"
             )
 
         print(f"\n  Rotation: {data.get('rotation')}")
@@ -170,17 +169,23 @@ def cmd_movers(
         )
 
         # Filter to actual gainers/losers
-        true_gainers = [g for g in gainers_list if g.get("netPercentChange", 0) > 0]
-        true_losers = [l for l in losers_list if l.get("netPercentChange", 0) < 0]
+        true_gainers = [gainer for gainer in gainers_list if gainer.get("netPercentChange", 0) > 0]
+        true_losers = [loser for loser in losers_list if loser.get("netPercentChange", 0) < 0]
 
         data = {
             "gainers": [
-                {"symbol": g.get("symbol"), "change_pct": g.get("netPercentChange")}
-                for g in true_gainers[:count]
+                {
+                    "symbol": gainer.get("symbol"),
+                    "change_pct": gainer.get("netPercentChange"),
+                }
+                for gainer in true_gainers[:count]
             ],
             "losers": [
-                {"symbol": l.get("symbol"), "change_pct": l.get("netPercentChange")}
-                for l in true_losers[:count]
+                {
+                    "symbol": loser.get("symbol"),
+                    "change_pct": loser.get("netPercentChange"),
+                }
+                for loser in true_losers[:count]
             ],
             "index": index.upper(),
         }
@@ -197,9 +202,9 @@ def cmd_movers(
 
         if not gainers_only:
             print(f"\nTOP LOSERS ({index.upper()})")
-            for l in data["losers"][:count]:
-                pct = l["change_pct"] * 100 if l["change_pct"] else 0
-                print(f"  {l['symbol']:8} {pct:.2f}%")
+            for loser in data["losers"][:count]:
+                pct = loser["change_pct"] * 100 if loser["change_pct"] else 0
+                print(f"  {loser['symbol']:8} {pct:.2f}%")
 
         print()
 
@@ -271,7 +276,11 @@ def cmd_hours(*, date: str | None = None, output_mode: str = "text") -> None:
 
         if data["is_open"] and data.get("session_hours"):
             for session, hours in data["session_hours"].items():
-                label = session.replace("regularMarket", "Regular").replace("preMarket", "Pre-Market").replace("postMarket", "Post-Market")
+                label = (
+                    session.replace("regularMarket", "Regular")
+                    .replace("preMarket", "Pre-Market")
+                    .replace("postMarket", "Post-Market")
+                )
                 print(f"  {label:14s} {hours['start']} → {hours['end']}")
 
         print()
@@ -360,13 +369,15 @@ def cmd_dividends(
                     if now <= ex_date <= now + timedelta(days=30):
                         shares = p.get("quantity", 0)
                         total = shares * ex_cal["amount"]
-                        upcoming_divs.append({
-                            "symbol": sym,
-                            "ex_date": ex_date.strftime("%b %d"),
-                            "amount_per_share": ex_cal["amount"],
-                            "total": total,
-                            "shares": shares,
-                        })
+                        upcoming_divs.append(
+                            {
+                                "symbol": sym,
+                                "ex_date": ex_date.strftime("%b %d"),
+                                "amount_per_share": ex_cal["amount"],
+                                "total": total,
+                                "shares": shares,
+                            }
+                        )
 
             if output_mode == "json":
                 print_json_response(command, data={"upcoming": upcoming_divs})
@@ -405,10 +416,13 @@ def cmd_dividends(
             )
             transactions = resp.json() if hasattr(resp, "json") else resp
             if isinstance(transactions, list):
-                all_dividends.extend([
-                    t for t in transactions
-                    if t.get("transactionType") in ["DIVIDEND", "INTEREST"]
-                ])
+                all_dividends.extend(
+                    [
+                        t
+                        for t in transactions
+                        if t.get("transactionType") in ["DIVIDEND", "INTEREST"]
+                    ]
+                )
 
         data = {
             "transactions": [
@@ -520,10 +534,12 @@ def cmd_lynch(*, output_mode: str = "text") -> None:
         holdings_data = []
         for pos in top_positions:
             sym = pos["symbol"]
-            holdings_data.append({
-                "symbol": sym,
-                "fundamentals": fund_by_symbol.get(sym, {}),
-            })
+            holdings_data.append(
+                {
+                    "symbol": sym,
+                    "fundamentals": fund_by_symbol.get(sym, {}),
+                }
+            )
 
         results = analyze_holdings_lynch(holdings_data)
 
@@ -587,7 +603,9 @@ def cmd_score(symbol: str, *, output_mode: str = "text") -> None:
 
         print(format_header(f"QUALITY SCORE: {symbol.upper()}"))
         print(f"  Signal: {signal} (projected {projected}/75)")
-        print(f"  Scored: {result['quantitative_total']}/{result['quantitative_max']} ({result['scored_count']} dimensions)")
+        print(
+            f"  Scored: {result['quantitative_total']}/{result['quantitative_max']} ({result['scored_count']} dimensions)"
+        )
         print(f"  Needs review: {result['unscored_count']} qualitative dimensions")
         print()
 
@@ -631,33 +649,6 @@ def cmd_iv(symbol: str, *, output_mode: str = "text") -> None:
             print(f"  Nearest Exp:    {data['dte']} DTE")
         print(f"  Signal:         {data['signal']}")
         print(f"  Interpretation: {data['interpretation']}")
-        print()
-
-    except (PortfolioError, httpx.HTTPStatusError) as exc:
-        handle_cli_error(exc, output_mode=output_mode, command=command)
-
-
-def cmd_hours(*, date: str | None = None, output_mode: str = "text") -> None:
-    """Check if the equity market is open on a given date."""
-    from src.core.market_service import get_market_hours
-
-    command = "hours"
-    try:
-        client = get_cached_market_client()
-        data = get_market_hours(client, date)
-
-        if output_mode == "json":
-            print_json_response(command, data=data)
-            return
-
-        status = "OPEN" if data["is_open"] else "CLOSED"
-        print(format_header("MARKET HOURS"))
-        print(f"  Date:    {data['date']}")
-        print(f"  Market:  {data['product']}")
-        print(f"  Status:  {status}")
-        if data.get("session_hours"):
-            for session, hours in data["session_hours"].items():
-                print(f"  {session}: {hours['start']} - {hours['end']}")
         print()
 
     except (PortfolioError, httpx.HTTPStatusError) as exc:
