@@ -24,6 +24,7 @@ reports/
 
 # Local agent skills (project-specific)
 .pi/skills/schwab-cli-tools/
+.learnings/
 
 # Account configuration with real numbers
 config/accounts.json
