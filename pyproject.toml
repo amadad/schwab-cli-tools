@@ -54,6 +54,19 @@ Issues = "https://github.com/amadad/schwab-cli-tools/issues"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build]
+exclude = [
+    "/.claude",
+    "/.pi",
+    "/.learnings",
+    "/autoresearch",
+    "/private",
+    "/tokens",
+    "/reports",
+    "/config/accounts.json",
+    "/.env*",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src", "config"]
 
@@ -63,14 +76,22 @@ managed = true
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
+    "pytest-cov>=6.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-mock>=3.12.0",
     "black>=24.0.0",
     "ruff>=0.8.0",
     "mypy>=1.14.0",
+    "ipython>=8.31.0",
+    "jsonschema>=4.20.0",
+    "argcomplete>=3.2.0",
+    "rich>=13.7.0",
 ]
 
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+extend-exclude = [".claude", ".pi", ".learnings", "autoresearch"]
 
 [tool.ruff.lint]
 select = [

@@ -1,0 +1,35 @@
+{
+  "inherited_ira_policies": [
+    {
+      "name": "Inherited IRA 1",
+      "accounts": ["acct_inherited_ira_1"],
+      "bucket_type": "depletion",
+      "distribution_deadline": "2030-12-31",
+      "cash_minimum": 85000
+    },
+    {
+      "name": "Inherited IRA 2",
+      "accounts": ["acct_inherited_ira_2"],
+      "bucket_type": "depletion",
+      "distribution_deadline": "2034-12-31",
+      "cash_minimum": 100000
+    }
+  ],
+  "cash_policies": {
+    "acct_taxable_trading": {"low": 30.0, "high": 50.0},
+    "acct_taxable_index": {"low": 0.0, "high": 5.0},
+    "acct_traditional_ira": {"low": 5.0, "high": 10.0},
+    "acct_roth_ira": {"low": 0.0, "high": 5.0},
+    "acct_family_roth": {"low": 0.0, "high": 5.0},
+    "acct_inherited_roth": {"low": 0.0, "high": 10.0}
+  },
+  "portfolio_cash_target": {"low": 15.0, "high": 30.0},
+  "calendar": {
+    "1": "Record inherited IRA balances. Calculate annual distribution floors.",
+    "3": "Verify inherited IRA distribution schedules and deployment plans.",
+    "6": "YTD distribution check — should be at least 50% of annual floor.",
+    "9": "YTD distribution check — should be at least 80% of annual floor.",
+    "10": "Review tax bracket headroom and any year-end true-up distributions.",
+    "12": "Finalize distributions, confirm withholding, and update the policy file."
+  }
+}

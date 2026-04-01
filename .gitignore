@@ -22,9 +22,11 @@ private/
 tokens/
 reports/
 
-# Local agent skills (project-specific)
-.pi/skills/schwab-cli-tools/
+# Local agent/editor state
+.claude/
+.pi/
 .learnings/
+autoresearch/
 
 # Account configuration with real numbers
 config/accounts.json

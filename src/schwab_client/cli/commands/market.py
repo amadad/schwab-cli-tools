@@ -3,6 +3,7 @@ Market commands: vix, indices, sectors, market, movers, futures, fundamentals, d
 """
 
 from datetime import datetime, timedelta
+from typing import Any
 
 import httpx
 from schwab.client.base import BaseClient  # for Movers enum
@@ -172,21 +173,23 @@ def cmd_movers(
         true_gainers = [gainer for gainer in gainers_list if gainer.get("netPercentChange", 0) > 0]
         true_losers = [loser for loser in losers_list if loser.get("netPercentChange", 0) < 0]
 
-        data = {
-            "gainers": [
-                {
-                    "symbol": gainer.get("symbol"),
-                    "change_pct": gainer.get("netPercentChange"),
-                }
-                for gainer in true_gainers[:count]
-            ],
-            "losers": [
-                {
-                    "symbol": loser.get("symbol"),
-                    "change_pct": loser.get("netPercentChange"),
-                }
-                for loser in true_losers[:count]
-            ],
+        gainers: list[dict[str, Any]] = [
+            {
+                "symbol": gainer.get("symbol"),
+                "change_pct": gainer.get("netPercentChange"),
+            }
+            for gainer in true_gainers[:count]
+        ]
+        losers: list[dict[str, Any]] = [
+            {
+                "symbol": loser.get("symbol"),
+                "change_pct": loser.get("netPercentChange"),
+            }
+            for loser in true_losers[:count]
+        ]
+        data: dict[str, Any] = {
+            "gainers": gainers,
+            "losers": losers,
             "index": index.upper(),
         }
 
@@ -365,7 +368,7 @@ def cmd_dividends(
                 sym = p.get("symbol")
                 if sym in ex_date_calendar:
                     ex_cal = ex_date_calendar[sym]
-                    ex_date = datetime(now.year, ex_cal["ex_month"], ex_cal["day"])
+                    ex_date = datetime(now.year, int(ex_cal["ex_month"]), int(ex_cal["day"]))
                     if now <= ex_date <= now + timedelta(days=30):
                         shares = p.get("quantity", 0)
                         total = shares * ex_cal["amount"]
@@ -404,6 +407,8 @@ def cmd_dividends(
         all_dividends = []
         for alias in secure_config.get_all_accounts():
             account_number = secure_config.get_account_number(alias)
+            if not account_number:
+                continue
             account_hash = client.get_account_hash(account_number)
             if not account_hash:
                 continue

@@ -3,6 +3,7 @@ Admin commands: auth, doctor, accounts.
 """
 
 import os
+from typing import Any
 
 import httpx
 
@@ -20,9 +21,10 @@ def cmd_auth(*, output_mode: str = "text") -> None:
     try:
         manager = TokenManager()
         info = manager.get_token_info()
+        storage = manager.get_storage_info()
 
         if output_mode == "json":
-            print_json_response(command, data={"token": info})
+            print_json_response(command, data={"token": info, "storage": storage})
             return
 
         print(format_header("AUTHENTICATION STATUS"))
@@ -35,6 +37,8 @@ def cmd_auth(*, output_mode: str = "text") -> None:
 
         if info.get("warning"):
             print(f"  Warning:      {info['warning']}")
+        print(f"  Token DB:     {storage['db_path']}")
+        print(f"  Locking:      {storage['locking']}")
 
         if not info.get("valid", False):
             print("\n  Run 'schwab-auth' to authenticate.")
@@ -64,8 +68,12 @@ def cmd_doctor(*, output_mode: str = "text") -> None:
             "callback_url": os.getenv("SCHWAB_MARKET_CALLBACK_URL", "https://127.0.0.1:8002"),
         }
 
-        portfolio_token = TokenManager(token_path=portfolio_token_path).get_token_info()
-        market_token = TokenManager(token_path=market_token_path).get_token_info()
+        portfolio_manager = TokenManager(token_path=portfolio_token_path)
+        market_manager = TokenManager(token_path=market_token_path)
+        portfolio_token = portfolio_manager.get_token_info()
+        market_token = market_manager.get_token_info()
+        portfolio_storage = portfolio_manager.get_storage_info()
+        market_storage = market_manager.get_storage_info()
 
         accounts = secure_config.get_all_accounts()
         accounts_configured = bool(accounts)
@@ -100,17 +108,19 @@ def cmd_doctor(*, output_mode: str = "text") -> None:
         if not accounts_configured:
             warnings.append("accounts_config_missing")
 
-        data = {
+        data: dict[str, Any] = {
             "data_dir": str(data_dir),
             "portfolio": {
                 "credentials_present": portfolio_creds["app_key"] and portfolio_creds["app_secret"],
                 "token_path": str(portfolio_token_path),
                 "token": portfolio_token,
+                "storage": portfolio_storage,
             },
             "market": {
                 "credentials_present": market_creds["app_key"] and market_creds["app_secret"],
                 "token_path": str(market_token_path),
                 "token": market_token,
+                "storage": market_storage,
             },
             "accounts": {
                 "configured": accounts_configured,
@@ -146,6 +156,7 @@ def cmd_doctor(*, output_mode: str = "text") -> None:
         if portfolio_token.get("warning"):
             print(f"    WARNING: {portfolio_token['warning']}")
         print(f"    Token path: {portfolio_token_path}")
+        print(f"    Token DB:   {portfolio_manager.db_path}")
 
         print("\n  Market API:")
         print(f"    Credentials: {'OK' if data['market']['credentials_present'] else 'MISSING'}")
@@ -165,6 +176,7 @@ def cmd_doctor(*, output_mode: str = "text") -> None:
         if market_token.get("warning"):
             print(f"    WARNING: {market_token['warning']}")
         print(f"    Token path: {market_token_path}")
+        print(f"    Token DB:   {market_manager.db_path}")
 
         print("\n  Accounts:")
         print(

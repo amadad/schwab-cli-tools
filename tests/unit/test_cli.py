@@ -1,6 +1,8 @@
 """Tests for Schwab CLI commands."""
 
+import io
 import json
+from contextlib import redirect_stdout
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -211,6 +213,179 @@ class TestAccountsCommandJSON:
         assert data["command"] == "accounts"
         assert data["success"] is True
         assert "accounts" in data["data"]
+
+
+class TestAuthAdminCommands:
+    """Tests for auth/doctor diagnostic output."""
+
+    @patch("src.schwab_client.cli.commands.admin.TokenManager")
+    def test_auth_json_includes_storage_metadata(self, mock_manager_cls):
+        """auth --json should expose sidecar/locking status explicitly."""
+        from src.schwab_client.cli.commands.admin import cmd_auth
+
+        mock_manager = MagicMock()
+        mock_manager.get_token_info.return_value = {
+            "exists": True,
+            "valid": True,
+            "db_path": "/tmp/tokens.db",
+        }
+        mock_manager.get_storage_info.return_value = {
+            "token_path": "/tmp/token.json",
+            "db_path": "/tmp/tokens.db",
+            "storage_mode": "token_json+sqlite_sidecar",
+            "locking": "sqlite_begin_exclusive",
+        }
+        mock_manager_cls.return_value = mock_manager
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            cmd_auth(output_mode="json")
+
+        payload = json.loads(output.getvalue())
+        assert payload["command"] == "auth"
+        assert payload["data"]["storage"]["db_path"] == "/tmp/tokens.db"
+        assert payload["data"]["storage"]["locking"] == "sqlite_begin_exclusive"
+
+    @patch("src.schwab_client.cli.commands.admin.secure_config")
+    @patch("src.schwab_client.cli.commands.admin.TokenManager")
+    def test_doctor_text_shows_token_db_paths(self, mock_manager_cls, mock_config):
+        """doctor text output should surface the token sidecar database paths."""
+        from src.schwab_client.cli.commands.admin import cmd_doctor
+
+        mock_manager = MagicMock()
+        mock_manager.get_token_info.return_value = {
+            "exists": True,
+            "valid": True,
+            "expires_in_hours": 48.0,
+            "expires_in_days": 2,
+        }
+        mock_manager.get_storage_info.return_value = {
+            "token_path": "/tmp/token.json",
+            "db_path": "/tmp/tokens.db",
+            "storage_mode": "token_json+sqlite_sidecar",
+            "locking": "sqlite_begin_exclusive",
+        }
+        mock_manager.db_path = "/tmp/tokens.db"
+        mock_manager_cls.return_value = mock_manager
+        mock_config.get_all_accounts.return_value = {}
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            cmd_doctor(output_mode="text")
+
+        text = output.getvalue()
+        assert "Token DB:" in text
+        assert "/tmp/tokens.db" in text
+
+    @patch("src.schwab_client.cli.commands.admin.secure_config")
+    @patch("src.schwab_client.cli.commands.admin.TokenManager")
+    def test_doctor_json_includes_storage_metadata(self, mock_manager_cls, mock_config):
+        """doctor --json should expose token storage metadata for both auth rails."""
+        from src.schwab_client.cli.commands.admin import cmd_doctor
+
+        mock_manager = MagicMock()
+        mock_manager.get_token_info.return_value = {
+            "exists": True,
+            "valid": True,
+            "expires_in_hours": 48.0,
+            "expires_in_days": 2,
+        }
+        mock_manager.get_storage_info.return_value = {
+            "token_path": "/tmp/token.json",
+            "db_path": "/tmp/tokens.db",
+            "storage_mode": "token_json+sqlite_sidecar",
+            "locking": "sqlite_begin_exclusive",
+        }
+        mock_manager_cls.return_value = mock_manager
+        mock_config.get_all_accounts.return_value = {}
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            cmd_doctor(output_mode="json")
+
+        payload = json.loads(output.getvalue())
+        assert payload["command"] == "doctor"
+        assert payload["data"]["portfolio"]["storage"]["db_path"] == "/tmp/tokens.db"
+        assert payload["data"]["market"]["storage"]["locking"] == "sqlite_begin_exclusive"
+
+
+class TestContextCommand:
+    """Tests for the portfolio context command."""
+
+    @patch("src.schwab_client.cli.commands.context_cmd.get_cached_market_client")
+    @patch("src.schwab_client.cli.commands.context_cmd.get_client")
+    @patch("src.schwab_client.cli.commands.context_cmd.PortfolioContext")
+    def test_context_json_envelope(self, mock_context_cls, mock_get_client, mock_get_market_client):
+        """Test context --json returns a valid envelope."""
+        from src.schwab_client.cli.commands.context_cmd import cmd_context
+
+        mock_client = MagicMock()
+        mock_market_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_get_market_client.return_value = mock_market_client
+
+        ctx = MagicMock()
+        ctx.to_dict.return_value = {
+            "assembled_at": "2026-04-01T12:00:00",
+            "summary": None,
+            "accounts": [],
+            "vix": None,
+            "regime": None,
+            "polymarket": None,
+            "lynch": None,
+            "ytd_distributions": {},
+            "policy_delta": None,
+            "errors": None,
+        }
+        mock_context_cls.assemble.return_value = ctx
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            cmd_context(output_mode="json")
+
+        payload = json.loads(output.getvalue())
+        errors = validate_envelope(payload)
+        assert not errors, f"Envelope errors: {errors}"
+        assert payload["command"] == "context"
+        assert payload["success"] is True
+        assert payload["data"] == ctx.to_dict.return_value
+        mock_context_cls.assemble.assert_called_once_with(
+            mock_client,
+            market_client=mock_market_client,
+            include_lynch=False,
+        )
+
+    @patch("src.schwab_client.cli.commands.context_cmd.get_cached_market_client")
+    @patch("src.schwab_client.cli.commands.context_cmd.get_client")
+    @patch("src.schwab_client.cli.commands.context_cmd.PortfolioContext")
+    def test_context_template_forces_lynch(
+        self,
+        mock_context_cls,
+        mock_get_client,
+        mock_get_market_client,
+    ):
+        """Test memo/review templates force the deeper Lynch analysis path."""
+        from src.schwab_client.cli.commands.context_cmd import cmd_context
+
+        mock_client = MagicMock()
+        mock_market_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_get_market_client.return_value = mock_market_client
+
+        ctx = MagicMock()
+        ctx.to_prompt_block.return_value = "context block"
+        mock_context_cls.assemble.return_value = ctx
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            cmd_context(template="memo")
+
+        assert output.getvalue()
+        mock_context_cls.assemble.assert_called_once_with(
+            mock_client,
+            market_client=mock_market_client,
+            include_lynch=True,
+        )
 
 
 class TestPortfolioCommand:

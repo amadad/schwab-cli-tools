@@ -17,6 +17,9 @@ from .common import MONEY_MARKET_SYMBOLS, _retry_on_transient_error
 class PortfolioClientMixin:
     """Mixin providing read-oriented Schwab account and quote methods."""
 
+    _client: Any
+    _account_hashes: dict[str, str] | None
+
     @_retry_on_transient_error()
     def get_account_numbers(self) -> list[dict[str, str]]:
         """Get account numbers with hash values."""
@@ -136,7 +139,7 @@ class PortfolioClientMixin:
             account_hash,
             start_date=start_dt,
             end_date=end_dt,
-            transaction_type=self._client.Transactions.TransactionType(transaction_type),
+            transaction_types=self._client.Transactions.TransactionType(transaction_type),
         )
         response.raise_for_status()
         return response.json()

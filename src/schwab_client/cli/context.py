@@ -96,7 +96,7 @@ def log_trade_attempt(
     *,
     action: str,
     symbol: str,
-    quantity: int,
+    quantity: float,
     account_alias: str,
     limit_price: float | None = None,
     dry_run: bool = False,

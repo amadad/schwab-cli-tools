@@ -16,6 +16,15 @@
       "properties": {
         "credentials_present": { "type": "boolean" },
         "token_path": { "type": "string" },
+        "storage": {
+          "type": "object",
+          "properties": {
+            "token_path": { "type": "string" },
+            "db_path": { "type": "string" },
+            "storage_mode": { "type": "string" },
+            "locking": { "type": "string" }
+          }
+        },
         "token": {
           "type": "object",
           "properties": {
@@ -33,6 +42,15 @@
       "properties": {
         "credentials_present": { "type": "boolean" },
         "token_path": { "type": "string" },
+        "storage": {
+          "type": "object",
+          "properties": {
+            "token_path": { "type": "string" },
+            "db_path": { "type": "string" },
+            "storage_mode": { "type": "string" },
+            "locking": { "type": "string" }
+          }
+        },
         "token": {
           "type": "object",
           "properties": {

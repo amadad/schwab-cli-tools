@@ -592,7 +592,7 @@ class TestScrubAccountIdentifiers:
 
 
 class TestCLIRoutingNewCommands:
-    """Tests for CLI routing of regime, lynch, score, and sell --stop."""
+    """Tests for CLI routing of regime, lynch, score, context, and sell options."""
 
     @patch("src.schwab_client.cli.cmd_regime")
     def test_regime_json_routes(self, mock_cmd):
@@ -600,6 +600,18 @@ class TestCLIRoutingNewCommands:
 
         main(["regime", "--json"])
         mock_cmd.assert_called_once_with(output_mode="json")
+
+    @patch("src.schwab_client.cli.cmd_context")
+    def test_context_json_routes(self, mock_cmd):
+        from src.schwab_client.cli import main
+
+        main(["context", "--json"])
+        mock_cmd.assert_called_once_with(
+            output_mode="json",
+            include_lynch=True,
+            prompt=False,
+            template=None,
+        )
 
     @patch("src.schwab_client.cli.cmd_lynch")
     def test_lynch_json_routes(self, mock_cmd):
@@ -652,3 +664,15 @@ class TestCLIRoutingNewCommands:
 
         main(["ly", "--json"])
         mock_cmd.assert_called_once_with(output_mode="json")
+
+    @patch("src.schwab_client.cli.cmd_context")
+    def test_context_alias_routes(self, mock_cmd):
+        from src.schwab_client.cli import main
+
+        main(["ctx", "--json"])
+        mock_cmd.assert_called_once_with(
+            output_mode="json",
+            include_lynch=True,
+            prompt=False,
+            template=None,
+        )

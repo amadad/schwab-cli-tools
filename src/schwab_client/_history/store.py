@@ -126,7 +126,10 @@ class HistoryStore(SnapshotNormalizer):
                         raw_json,
                     ),
                 )
-                snapshot_id = int(cursor.lastrowid)
+                row_id = cursor.lastrowid
+                if row_id is None:
+                    raise ConfigError("Could not determine snapshot_id for stored snapshot")
+                snapshot_id = int(row_id)
 
             self._clear_snapshot_children(conn, snapshot_id)
             self._insert_components(conn, snapshot_id, canonical)
@@ -231,6 +234,103 @@ class HistoryStore(SnapshotNormalizer):
             sql += " WHERE observed_at >= ?"
             params.append(since)
         sql += " ORDER BY observed_at DESC, snapshot_id DESC LIMIT ?"
+        params.append(limit)
+        return self._fetch_all(sql, params)
+
+    def store_transactions(
+        self,
+        transactions: list[dict[str, Any]],
+        *,
+        account_key: str,
+    ) -> int:
+        """Store transactions, deduplicating by unique constraint.
+
+        Returns the number of new transactions inserted.
+        """
+        from datetime import datetime
+
+        observed_at = datetime.now().isoformat()
+        inserted = 0
+
+        with self._connect() as conn:
+            for tx in transactions:
+                net_amount = float(tx.get("net_amount", 0) or 0)
+                tx_type = tx.get("type", "UNKNOWN")
+                description = tx.get("description", "")
+                tx_date = tx.get("date", "")
+                is_dist = int(tx.get("is_distribution", False))
+
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO transactions (
+                            observed_at, account_key, transaction_date,
+                            transaction_type, description, net_amount,
+                            symbol, quantity, is_distribution, raw_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            observed_at,
+                            account_key,
+                            tx_date,
+                            tx_type,
+                            description,
+                            net_amount,
+                            tx.get("symbol"),
+                            tx.get("quantity"),
+                            is_dist,
+                            json.dumps(tx.get("raw")) if tx.get("raw") else None,
+                        ),
+                    )
+                    inserted += 1
+                except sqlite3.IntegrityError:
+                    pass  # duplicate — already stored
+
+            conn.commit()
+        return inserted
+
+    def get_distribution_ytd(self, year: int | None = None) -> list[dict[str, Any]]:
+        """Get YTD distribution totals per account."""
+        year = year or __import__("datetime").date.today().year
+        year_start = f"{year}-01-01"
+        return self._fetch_all(
+            """
+            SELECT
+                a.account_label,
+                a.account_alias,
+                t.account_key,
+                SUM(ABS(t.net_amount)) AS ytd_total,
+                COUNT(*) AS distribution_count,
+                MIN(t.transaction_date) AS first_distribution,
+                MAX(t.transaction_date) AS last_distribution
+            FROM transactions AS t
+            JOIN accounts AS a ON a.account_key = t.account_key
+            WHERE t.is_distribution = 1
+              AND t.transaction_date >= ?
+            GROUP BY t.account_key
+            """,
+            [year_start],
+        )
+
+    def get_distribution_history(
+        self, *, account: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Get distribution transaction history."""
+        sql = """
+            SELECT
+                t.transaction_date,
+                a.account_label,
+                t.net_amount,
+                t.description
+            FROM transactions AS t
+            JOIN accounts AS a ON a.account_key = t.account_key
+            WHERE t.is_distribution = 1
+        """
+        params: list[Any] = []
+        if account:
+            sql += " AND (a.account_label = ? OR a.account_alias = ?)"
+            params.extend([account, account])
+        sql += " ORDER BY t.transaction_date DESC LIMIT ?"
         params.append(limit)
         return self._fetch_all(sql, params)
 
@@ -385,9 +485,9 @@ class HistoryStore(SnapshotNormalizer):
         )
 
         api_account_keys: dict[str, str] = {}
-        for account in snapshot.portfolio.api_accounts:
-            account_key = self._upsert_account(conn, source="api", account=account)
-            api_account_keys[self._account_lookup_key(account)] = account_key
+        for api_account in snapshot.portfolio.api_accounts:
+            account_key = self._upsert_account(conn, source="api", account=api_account)
+            api_account_keys[self._account_lookup_key(api_account)] = account_key
             conn.execute(
                 """
                 INSERT INTO account_snapshots (
@@ -405,22 +505,22 @@ class HistoryStore(SnapshotNormalizer):
                 (
                     snapshot_id,
                     account_key,
-                    self._float(account.total_value),
-                    self._float(account.cash_balance),
-                    self._float(account.money_market_value),
-                    self._float(account.total_cash),
-                    self._float(account.invested_value),
-                    self._float(account.buying_power),
-                    self._nullable_int(account.position_count),
+                    self._float(api_account.total_value),
+                    self._float(api_account.cash_balance),
+                    self._float(api_account.money_market_value),
+                    self._float(api_account.total_cash),
+                    self._float(api_account.invested_value),
+                    self._float(api_account.buying_power),
+                    self._nullable_int(api_account.position_count),
                 ),
             )
 
-            for position in account.positions:
+            for position in api_account.positions:
                 self._insert_position(conn, snapshot_id, account_key, position)
 
-        for account in snapshot.portfolio.manual_accounts.accounts:
-            account_key = self._upsert_account(conn, source="manual", account=account)
-            is_cash = account.category == "cash"
+        for manual_account in snapshot.portfolio.manual_accounts.accounts:
+            account_key = self._upsert_account(conn, source="manual", account=manual_account)
+            is_cash = manual_account.category == "cash"
             conn.execute(
                 """
                 INSERT INTO account_snapshots (
@@ -438,11 +538,11 @@ class HistoryStore(SnapshotNormalizer):
                 (
                     snapshot_id,
                     account_key,
-                    self._float(account.value),
-                    self._float(account.value if is_cash else 0),
+                    self._float(manual_account.value),
+                    self._float(manual_account.value if is_cash else 0),
                     0.0,
-                    self._float(account.value if is_cash else 0),
-                    self._float(account.value if not is_cash else 0),
+                    self._float(manual_account.value if is_cash else 0),
+                    self._float(manual_account.value if not is_cash else 0),
                     0.0,
                     None,
                 ),
@@ -498,7 +598,7 @@ class HistoryStore(SnapshotNormalizer):
             ),
         )
 
-        for symbol, entry in indices.items():
+        for symbol, index_entry in indices.items():
             conn.execute(
                 """
                 INSERT INTO index_snapshots (
@@ -513,14 +613,14 @@ class HistoryStore(SnapshotNormalizer):
                 (
                     snapshot_id,
                     symbol,
-                    entry.name,
-                    self._float(entry.price),
-                    self._float(entry.change),
-                    self._float(entry.change_pct),
+                    index_entry.name,
+                    self._float(index_entry.price),
+                    self._float(index_entry.change),
+                    self._float(index_entry.change_pct),
                 ),
             )
 
-        for rank, entry in enumerate(sectors, start=1):
+        for rank, sector_entry in enumerate(sectors, start=1):
             conn.execute(
                 """
                 INSERT INTO sector_snapshots (
@@ -534,10 +634,10 @@ class HistoryStore(SnapshotNormalizer):
                 """,
                 (
                     snapshot_id,
-                    entry.symbol,
-                    entry.sector,
-                    self._float(entry.price),
-                    self._float(entry.change_pct),
+                    sector_entry.symbol,
+                    sector_entry.sector,
+                    self._float(sector_entry.price),
+                    self._float(sector_entry.change_pct),
                     rank,
                 ),
             )

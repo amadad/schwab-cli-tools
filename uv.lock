@@ -898,9 +898,16 @@ dev = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "argcomplete" },
     { name = "black" },
+    { name = "ipython" },
+    { name = "jsonschema" },
     { name = "mypy" },
     { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+    { name = "rich" },
     { name = "ruff" },
 ]
 
@@ -925,9 +932,16 @@ provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "argcomplete", specifier = ">=3.2.0" },
     { name = "black", specifier = ">=24.0.0" },
+    { name = "ipython", specifier = ">=8.31.0" },
+    { name = "jsonschema", specifier = ">=4.20.0" },
     { name = "mypy", specifier = ">=1.14.0" },
     { name = "pytest", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", specifier = ">=0.24.0" },
+    { name = "pytest-cov", specifier = ">=6.0.0" },
+    { name = "pytest-mock", specifier = ">=3.12.0" },
+    { name = "rich", specifier = ">=13.7.0" },
     { name = "ruff", specifier = ">=0.8.0" },
 ]
 

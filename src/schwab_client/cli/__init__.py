@@ -48,6 +48,7 @@ from .commands import (
     cmd_auth,
     cmd_balance,
     cmd_buy,
+    cmd_context,
     cmd_dividends,
     cmd_doctor,
     cmd_fundamentals,
@@ -89,6 +90,7 @@ COMMAND_ALIASES = {
     "fut": "futures",
     "fund": "fundamentals",
     "div": "dividends",
+    "ctx": "context",
     "ly": "lynch",
     "reg": "regime",
     "dr": "doctor",
@@ -131,6 +133,7 @@ Aliases:
   p=portfolio, pos=positions, bal=balance, alloc=allocation,
   idx=indices, sec=sectors, mkt=market,
   mov=movers, fut=futures, fund=fundamentals, div=dividends,
+  ctx=context, ly=lynch, reg=regime,
   dr=doctor, hist=history, snap=snapshot, ord=orders
 
 Examples:
@@ -140,6 +143,8 @@ Examples:
   schwab history --dataset portfolio --limit 10
   schwab query "SELECT * FROM portfolio_history LIMIT 5"
   schwab snapshot --json
+  schwab context --json
+  schwab context -t memo
   schwab snapshot --output ./private/reports/latest.json
   schwab buy acct_trading AAPL 10 --dry-run
   schwab dr                    # doctor diagnostics
@@ -228,6 +233,37 @@ Examples:
         "score", help="Score a stock (quality framework)", parents=[common_parser]
     )
     score_parser.add_argument("symbol", help="Symbol to score")
+
+    # Context command
+    context_parser = subparsers.add_parser(
+        "context",
+        aliases=["ctx"],
+        help="Assemble full portfolio context",
+        parents=[common_parser],
+    )
+    context_parser.add_argument(
+        "--lynch",
+        action="store_true",
+        default=True,
+        help="Include Lynch sell signals (use --no-lynch to skip)",
+    )
+    context_parser.add_argument(
+        "--no-lynch",
+        dest="lynch",
+        action="store_false",
+        help="Skip Lynch sell signals for faster output",
+    )
+    context_parser.add_argument(
+        "--prompt",
+        action="store_true",
+        help="Output as an LLM-ready prompt block",
+    )
+    context_parser.add_argument(
+        "--template",
+        "-t",
+        choices=["brief", "review", "memo"],
+        help="Wrap context in a prompt template (brief/review/memo)",
+    )
 
     # Admin commands
     subparsers.add_parser("auth", help="Check authentication", parents=[common_parser])
@@ -406,6 +442,13 @@ def main(args: list | None = None) -> None:
         cmd_regime(output_mode=output_mode)
     elif parsed.command == "score":
         cmd_score(parsed.symbol, output_mode=output_mode)
+    elif parsed.command == "context":
+        cmd_context(
+            output_mode=output_mode,
+            include_lynch=getattr(parsed, "lynch", False),
+            prompt=getattr(parsed, "prompt", False),
+            template=getattr(parsed, "template", None),
+        )
     elif parsed.command == "auth":
         cmd_auth(output_mode=output_mode)
     elif parsed.command == "doctor":

@@ -1,6 +1,7 @@
 """CLI command modules."""
 
 from .admin import cmd_accounts, cmd_auth, cmd_doctor
+from .context_cmd import cmd_context
 from .history import cmd_history, cmd_query
 from .market import (
     cmd_dividends,
@@ -27,6 +28,8 @@ from .report import cmd_report, cmd_snapshot
 from .trade import cmd_buy, cmd_orders, cmd_sell
 
 __all__ = [
+    # Context
+    "cmd_context",
     # Portfolio
     "cmd_portfolio",
     "cmd_positions",

@@ -129,7 +129,7 @@ def handle_cli_error(error: Exception, *, output_mode: str, command: str) -> Non
             )
 
         if output_mode == "json":
-            error_data = {"type": "APIError", "message": message}
+            error_data: dict[str, Any] = {"type": "APIError", "message": message}
             if request_id:
                 error_data["request_id"] = request_id
             if status_code:

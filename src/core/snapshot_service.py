@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from src.core.models import ManualAccount, ManualAccountsSummary, PortfolioSummary
 
 
 def summarize_manual_accounts_model(
-    manual_accounts: list[ManualAccount | dict[str, Any]],
+    manual_accounts: Sequence[ManualAccount | dict[str, Any]],
 ) -> ManualAccountsSummary:
     """Summarize manual account values for holistic reporting."""
     accounts = [
@@ -49,7 +50,7 @@ def summarize_manual_accounts(manual_accounts: list[dict[str, Any]]) -> dict[str
 
 def merge_portfolio_summary_model(
     api_summary: PortfolioSummary | dict[str, Any],
-    manual_accounts: list[ManualAccount | dict[str, Any]],
+    manual_accounts: Sequence[ManualAccount | dict[str, Any]],
 ) -> PortfolioSummary:
     """Merge API portfolio summary with manual account totals."""
     summary = (

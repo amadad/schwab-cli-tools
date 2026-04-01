@@ -299,10 +299,12 @@ def get_implied_volatility(client, symbol: str) -> dict[str, Any]:
         call_map = data.get("callExpDateMap", {})
         if call_map:
             # Take first expiration
-            first_exp = next(iter(call_map.values()), {})
+            first_exp: dict[str, Any] = next(iter(call_map.values()), {})
             if first_exp:
                 # Take the strike closest to ATM
-                first_strike_options = next(iter(first_exp.values()), [])
+                first_strike_options: list[dict[str, Any]] | dict[str, Any] = next(
+                    iter(first_exp.values()), []
+                )
                 if first_strike_options:
                     opt = (
                         first_strike_options[0]
@@ -381,7 +383,7 @@ def get_market_hours(client, date_str: str | None = None) -> dict[str, Any]:
     # Response structure: {"equity": {"EQ": {...}}} or {"equity": {"equity": {...}}}
     equity_data = data.get("equity", {})
     # Get the first (and usually only) market entry
-    market_info = next(iter(equity_data.values()), {})
+    market_info: dict[str, Any] = next(iter(equity_data.values()), {})
 
     is_open = market_info.get("isOpen", False)
     market_date = market_info.get("date", str(check_date))

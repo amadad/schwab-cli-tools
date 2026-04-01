@@ -9,19 +9,26 @@ Keep the CLI thin and push reusable logic into focused modules.
 ## Layers
 
 ### `src/core/`
-Pure business logic.
+Business logic and analysis assembly.
 
 Put here:
 - portfolio aggregation
 - market signal calculations
 - snapshot merge helpers
-- logic with no I/O side effects
+- policy / scoring heuristics
+- policy profile loading from public templates or ignored local files
+- context assembly for agent-facing analysis
+
+Prefer to keep most modules here free of side effects.
+`context.py` is the main exception today: it orchestrates wrapper calls,
+optional market inputs, and config-backed account metadata into one
+agent-friendly analysis object.
 
 Avoid putting here:
 - CLI printing
-- filesystem access
-- raw API client usage
-- environment/config loading
+- ad hoc filesystem writes
+- environment/config loading spread across many modules
+- duplicated API orchestration when one focused assembler will do
 
 ### `src/schwab_client/cli/`
 Command-line interface.
@@ -104,3 +111,8 @@ export-oriented wrapper that writes the same canonical snapshot JSON to disk.
 1. update `config/accounts.template.json` if needed
 2. update `config/secure_account_config.py`
 3. update `docs/account-config.md`
+
+### Change portfolio policy defaults
+1. update `config/policy.template.json` for the public generic template
+2. keep real household/account aliases in `private/policy.json` or `SCHWAB_POLICY_PATH`
+3. update `src/core/policy.py` only when the policy schema/engine changes

@@ -126,6 +126,59 @@ SCHEMA_STATEMENTS = [
         PRIMARY KEY (snapshot_id, symbol)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        observed_at TEXT NOT NULL,
+        account_key TEXT NOT NULL,
+        transaction_date TEXT NOT NULL,
+        transaction_type TEXT NOT NULL,
+        description TEXT,
+        net_amount REAL NOT NULL DEFAULT 0,
+        symbol TEXT,
+        quantity REAL,
+        is_distribution INTEGER NOT NULL DEFAULT 0,
+        raw_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(account_key, transaction_date, transaction_type, net_amount, description)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_key)",
+    "CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(transaction_date DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_transactions_distribution ON transactions(is_distribution) WHERE is_distribution = 1",
+    """
+    CREATE VIEW IF NOT EXISTS distribution_history AS
+    SELECT
+        t.id,
+        t.observed_at,
+        t.account_key,
+        a.account_label,
+        a.account_alias,
+        t.transaction_date,
+        t.net_amount,
+        t.description,
+        t.raw_json
+    FROM transactions AS t
+    JOIN accounts AS a ON a.account_key = t.account_key
+    WHERE t.is_distribution = 1
+    ORDER BY t.transaction_date DESC
+    """,
+    """
+    CREATE VIEW IF NOT EXISTS distribution_ytd AS
+    SELECT
+        a.account_label,
+        a.account_alias,
+        t.account_key,
+        SUM(ABS(t.net_amount)) AS ytd_total,
+        COUNT(*) AS distribution_count,
+        MIN(t.transaction_date) AS first_distribution,
+        MAX(t.transaction_date) AS last_distribution
+    FROM transactions AS t
+    JOIN accounts AS a ON a.account_key = t.account_key
+    WHERE t.is_distribution = 1
+      AND t.transaction_date >= strftime('%Y-01-01', 'now')
+    GROUP BY t.account_key
+    """,
     "CREATE INDEX IF NOT EXISTS idx_snapshot_runs_observed_at ON snapshot_runs(observed_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_position_snapshots_symbol ON position_snapshots(symbol)",
     "CREATE INDEX IF NOT EXISTS idx_position_snapshots_account_key ON position_snapshots(account_key)",

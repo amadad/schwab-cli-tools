@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -105,7 +106,7 @@ def _sanitize_position_model(position: PositionSnapshot) -> PositionSnapshot:
 
 
 def _sanitize_positions_model(
-    positions: list[PositionSnapshot | dict[str, Any]],
+    positions: Sequence[PositionSnapshot | dict[str, Any]],
 ) -> list[PositionSnapshot]:
     sanitized: list[PositionSnapshot] = []
     for position in positions:
@@ -124,7 +125,7 @@ def sanitize_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _sanitize_account_snapshots_model(
-    accounts: list[AccountSnapshot | dict[str, Any]],
+    accounts: Sequence[AccountSnapshot | dict[str, Any]],
 ) -> list[AccountSnapshot]:
     sanitized: list[AccountSnapshot] = []
 

@@ -47,8 +47,9 @@ locally. It prints a URL you can open on any device (phone, laptop, etc.), then 
 you to paste the callback URL. Both auth commands support this flag.
 
 Market commands (`vix`, `indices`, `sectors`, `market`, `movers`, `futures`) require
-the market auth flow. Tokens are stored under `~/.schwab-cli-tools/tokens` by default.
-Refresh tokens expire after 7 days.
+the market auth flow. Token JSON files are stored under `~/.schwab-cli-tools/tokens`
+by default, with a sibling SQLite `tokens.db` sidecar used for local locking and
+cached token metadata. Refresh tokens expire after 7 days.
 
 ## CLI Commands
 
@@ -81,10 +82,25 @@ schwab movers              # Top gainers/losers
 schwab mov --gainers       # Gainers only
 schwab futures             # Pre-market futures (/ES, /NQ)
 schwab fut                 # Alias
+schwab hours               # Market hours for today or a given date
 schwab fundamentals AAPL   # Symbol fundamentals
 schwab fund AAPL           # Alias
+schwab iv AAPL             # Implied volatility from the options chain
 schwab dividends           # Recent dividends
 schwab div --upcoming      # Upcoming ex-dates
+```
+
+### Analysis / Context Commands
+
+```bash
+schwab regime              # Market regime (risk-on/off)
+schwab reg                 # Alias
+schwab lynch               # Lynch sell-signal scan for holdings
+schwab ly                  # Alias
+schwab score AAPL          # Quality framework score for a symbol
+schwab context             # Assemble portfolio + market + policy context
+schwab ctx --prompt        # LLM-ready prompt block
+schwab context -t memo     # Wrap the context in a memo template
 ```
 
 ### Admin Commands
@@ -146,6 +162,9 @@ schwab ord                                   # Alias
 | futures | fut |
 | fundamentals | fund |
 | dividends | div |
+| context | ctx |
+| lynch | ly |
+| regime | reg |
 | doctor | dr |
 | history | hist |
 | snapshot | snap |
@@ -197,9 +216,14 @@ export SCHWAB_HISTORY_DB_PATH=~/.schwab-cli-tools/history/schwab_history.db
 # Optional manual accounts file for holistic household totals
 export SCHWAB_MANUAL_ACCOUNTS_PATH=./private/notes/manual_accounts.json
 
+# Optional policy profile (defaults to ./private/policy.json when present,
+# otherwise falls back to config/policy.template.json)
+export SCHWAB_POLICY_PATH=./private/policy.json
+
 # Token paths (override data dir)
 export SCHWAB_TOKEN_PATH=~/.schwab-cli-tools/tokens/schwab_token.json
 export SCHWAB_MARKET_TOKEN_PATH=~/.schwab-cli-tools/tokens/schwab_market_token.json
+# A local SQLite sidecar (tokens.db) is created next to the token files automatically
 
 # Trade safety (NEVER enable in automation)
 export SCHWAB_ALLOW_LIVE_TRADES=true
@@ -214,6 +238,19 @@ cp config/accounts.template.json config/accounts.json
 ```
 
 See [`docs/account-config.md`](docs/account-config.md) for the account config schema and field documentation.
+
+### Optional policy profile
+
+The public repo ships a generic `config/policy.template.json`. For real household or
+portfolio-specific rules, copy it to an ignored local file and customize the
+account aliases and thresholds there:
+
+```bash
+cp config/policy.template.json private/policy.json
+# or set SCHWAB_POLICY_PATH to another local file
+```
+
+This keeps the repo public-safe while preserving your real local policy logic.
 
 ## JSON Response Envelope
 
@@ -274,6 +311,7 @@ src/schwab_client/
 │       ├── history.py      # history, query
 │       ├── trade.py        # buy, sell, orders
 │       ├── admin.py        # auth, doctor, accounts
+│       ├── context_cmd.py  # context prompt / memo assembly
 │       └── report.py       # report, snapshot
 ├── _client/                # Internal client mixins / shared helpers
 ├── _history/               # Internal history schema + normalization + store
@@ -283,15 +321,22 @@ src/schwab_client/
 ├── snapshot.py             # Canonical snapshot collection
 └── client.py               # Public SchwabClientWrapper surface
 
-src/core/                   # Pure business logic
+src/core/                   # Business logic and portfolio analysis helpers
+├── context.py              # Portfolio context assembly
 ├── portfolio_service.py    # Portfolio aggregation
 ├── market_service.py       # Market data processing
 ├── snapshot_service.py     # Manual-account merge + snapshot helpers
+├── policy.py               # Policy evaluation and pacing alerts
+├── polymarket.py           # External macro probability signals
+├── prompts.py              # Brief/review/memo templates
+├── lynch_service.py        # Lynch sell-signal heuristics
+├── score_service.py        # Quality scoring heuristics
 └── errors.py               # Custom exceptions
 
 config/
 ├── accounts.schema.json    # JSON schema for accounts
-├── accounts.template.json  # Template (tracked)
+├── accounts.template.json  # Account template (tracked)
+├── policy.template.json    # Generic policy/profile template (tracked)
 ├── accounts.json           # Your config (gitignored)
 └── secure_account_config.py
 

@@ -783,7 +783,7 @@ class SnapshotDocument(_SerializableModel):
         )
 
     def to_dict(self) -> dict[str, Any]:
-        data = {
+        data: dict[str, Any] = {
             "generated_at": self.generated_at,
             "portfolio": self.portfolio.to_dict(),
             "market": self.market.to_dict() if self.market else None,

@@ -16,7 +16,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 from schwab import auth
 
-from .auth import TokenManager, get_token_manager, resolve_token_path
+from .auth import (
+    TOKEN_MAX_AGE_SECONDS,
+    TokenManager,
+    get_token_manager,
+    resolve_token_path,
+)
 
 load_dotenv()
 
@@ -32,6 +37,19 @@ def resolve_market_token_path() -> Path:
 
 # Separate token file for market data
 MARKET_TOKEN_PATH = resolve_market_token_path()
+
+
+def _build_managed_market_client(
+    api_key: str,
+    app_secret: str,
+    manager: TokenManager,
+):
+    return auth.client_from_access_functions(
+        api_key=api_key,
+        app_secret=app_secret,
+        token_read_func=manager.read_token_object,
+        token_write_func=manager.write_token_object,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -113,15 +131,19 @@ def authenticate_market_data(args: argparse.Namespace | None = None):
     print("Complete the login and authorize the application.\n")
 
     try:
-        client = auth.client_from_login_flow(
-            api_key=api_key,
-            app_secret=app_secret,
-            callback_url=callback_url,
-            token_path=str(MARKET_TOKEN_PATH),
-            callback_timeout=args.timeout,
-            interactive=args.interactive,
-            requested_browser=args.browser,
-        )
+        with manager.auth_lock() as conn:
+            auth.client_from_login_flow(
+                api_key=api_key,
+                app_secret=app_secret,
+                callback_url=callback_url,
+                token_path=str(MARKET_TOKEN_PATH),
+                callback_timeout=args.timeout,
+                interactive=args.interactive,
+                requested_browser=args.browser,
+            )
+            manager.sync_state_from_file(conn=conn)
+
+        client = _build_managed_market_client(api_key, app_secret, manager)
 
         print("\nAuthentication successful!")
         print(f"Tokens saved to {MARKET_TOKEN_PATH}")
@@ -186,12 +208,16 @@ def authenticate_market_data_manual(
     print()
 
     try:
-        client = auth.client_from_manual_flow(
-            api_key=api_key,
-            app_secret=app_secret,
-            callback_url=callback_url,
-            token_path=str(MARKET_TOKEN_PATH),
-        )
+        with manager.auth_lock() as conn:
+            auth.client_from_manual_flow(
+                api_key=api_key,
+                app_secret=app_secret,
+                callback_url=callback_url,
+                token_path=str(MARKET_TOKEN_PATH),
+            )
+            manager.sync_state_from_file(conn=conn)
+
+        client = _build_managed_market_client(api_key, app_secret, manager)
 
         print()
         print("Authentication successful!")
@@ -235,14 +261,32 @@ def get_market_client():
             "Set SCHWAB_MARKET_APP_KEY and SCHWAB_MARKET_CLIENT_SECRET."
         )
 
+    manager = get_token_manager(token_path=MARKET_TOKEN_PATH)
     MARKET_TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    return auth.easy_client(
-        api_key=api_key,
-        app_secret=app_secret,
-        callback_url=callback_url,
-        token_path=str(MARKET_TOKEN_PATH),
-    )
+    client = None
+    if manager.tokens_exist():
+        try:
+            client = _build_managed_market_client(api_key, app_secret, manager)
+            if client.token_age() >= TOKEN_MAX_AGE_SECONDS:
+                manager.delete_tokens()
+                client = None
+        except Exception:
+            manager.delete_tokens()
+            client = None
+
+    if client is None:
+        with manager.auth_lock() as conn:
+            auth.easy_client(
+                api_key=api_key,
+                app_secret=app_secret,
+                callback_url=callback_url,
+                token_path=str(MARKET_TOKEN_PATH),
+            )
+            manager.sync_state_from_file(conn=conn)
+        client = _build_managed_market_client(api_key, app_secret, manager)
+
+    return client
 
 
 def main():

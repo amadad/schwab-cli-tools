@@ -179,7 +179,7 @@ def require_trade_confirmation(
     *,
     action: str,
     symbol: str,
-    quantity: int,
+    quantity: float,
     account_label: str,
     limit_price: float | None = None,
 ) -> bool:
@@ -189,7 +189,7 @@ def require_trade_confirmation(
     print(f"{'=' * 60}")
     print(f"Action:   {action}")
     print(f"Symbol:   {symbol}")
-    print(f"Quantity: {quantity} shares")
+    print(f"Quantity: {quantity:g} shares")
     if limit_price:
         print(f"Type:     LIMIT @ ${limit_price:.2f}")
     else:
@@ -293,7 +293,10 @@ def execute_trade(
         if sell_all and action == "sell":
             position_qty = get_position_quantity(client, account, symbol)
             quantity = position_qty
-            print(f"Selling all {quantity} shares of {symbol}")
+            print(f"Selling all {quantity:g} shares of {symbol}")
+
+        if quantity is None:
+            raise ConfigError("Quantity is required unless using sell --all.")
 
         # Generate preview
         if trailing_stop_percent is not None and action == "sell":

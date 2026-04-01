@@ -11,13 +11,16 @@ from schwab.orders.equities import (
     equity_sell_market,
 )
 
-from config.secure_account_config import secure_config
-
 from .common import logger
 
 
 class TradingClientMixin:
     """Mixin providing order placement and cancellation helpers."""
+
+    _client: Any
+
+    def get_account_hash(self, account_number: str) -> str | None:
+        raise NotImplementedError
 
     def place_order(self, account_hash: str, order: dict) -> dict[str, Any]:
         """Place an order for an account."""
@@ -76,6 +79,8 @@ class TradingClientMixin:
 
     def _resolve_account_for_trade(self, account_alias: str) -> dict[str, Any]:
         """Resolve account alias to account details used by order methods."""
+        from src.schwab_client.client import secure_config
+
         account_number = secure_config.get_account_number(account_alias)
         if not account_number:
             return {"success": False, "error": f"Unknown account alias: {account_alias}"}
@@ -98,7 +103,7 @@ class TradingClientMixin:
         action: Literal["BUY", "SELL"],
         order_type: Literal["MARKET", "LIMIT", "STOP", "STOP_LIMIT", "TRAILING_STOP"],
         symbol: str,
-        quantity: int,
+        quantity: float,
         limit_price: float | None = None,
         stop_price: float | None = None,
         trailing_stop_percent: float | None = None,
@@ -151,7 +156,7 @@ class TradingClientMixin:
         *,
         account_alias: str,
         symbol: str,
-        quantity: int,
+        quantity: float,
         action: Literal["BUY", "SELL"],
         order_type: Literal["MARKET", "LIMIT", "STOP", "STOP_LIMIT", "TRAILING_STOP"],
         limit_price: float | None = None,
@@ -200,7 +205,7 @@ class TradingClientMixin:
         self,
         account_alias: str,
         symbol: str,
-        quantity: int,
+        quantity: float,
         dry_run: bool = False,
     ) -> dict[str, Any]:
         """Place a market buy order."""
@@ -217,7 +222,7 @@ class TradingClientMixin:
         self,
         account_alias: str,
         symbol: str,
-        quantity: int,
+        quantity: float,
         dry_run: bool = False,
     ) -> dict[str, Any]:
         """Place a market sell order."""
@@ -234,7 +239,7 @@ class TradingClientMixin:
         self,
         account_alias: str,
         symbol: str,
-        quantity: int,
+        quantity: float,
         limit_price: float,
         dry_run: bool = False,
     ) -> dict[str, Any]:
@@ -253,7 +258,7 @@ class TradingClientMixin:
         self,
         account_alias: str,
         symbol: str,
-        quantity: int,
+        quantity: float,
         limit_price: float,
         dry_run: bool = False,
     ) -> dict[str, Any]:
@@ -272,7 +277,7 @@ class TradingClientMixin:
         self,
         account_alias: str,
         symbol: str,
-        quantity: int,
+        quantity: float,
         stop_price: float,
         dry_run: bool = False,
     ) -> dict[str, Any]:
@@ -291,7 +296,7 @@ class TradingClientMixin:
         self,
         account_alias: str,
         symbol: str,
-        quantity: int,
+        quantity: float,
         stop_price: float,
         limit_price: float,
         dry_run: bool = False,
@@ -312,7 +317,7 @@ class TradingClientMixin:
         self,
         account_alias: str,
         symbol: str,
-        quantity: int,
+        quantity: float,
         trailing_stop_percent: float,
         dry_run: bool = False,
     ) -> dict[str, Any]:
