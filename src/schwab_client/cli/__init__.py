@@ -44,6 +44,12 @@ except ImportError:
 
 from .commands import (
     cmd_accounts,
+    cmd_advisor_close,
+    cmd_advisor_evaluate,
+    cmd_advisor_learn,
+    cmd_advisor_review,
+    cmd_advisor_status,
+    cmd_advisor_thesis,
     cmd_allocation,
     cmd_auth,
     cmd_balance,
@@ -93,6 +99,7 @@ COMMAND_ALIASES = {
     "ctx": "context",
     "ly": "lynch",
     "reg": "regime",
+    "adv": "advisor",
     "dr": "doctor",
     "hist": "history",
     "snap": "snapshot",
@@ -264,6 +271,56 @@ Examples:
         choices=["brief", "review", "memo"],
         help="Wrap context in a prompt template (brief/review/memo)",
     )
+
+    # Advisor learning loop
+    advisor_parser = subparsers.add_parser(
+        "advisor",
+        aliases=["adv"],
+        help="Portfolio advisor learning loop",
+        parents=[common_parser],
+    )
+    advisor_sub = advisor_parser.add_subparsers(dest="advisor_command", help="Advisor commands")
+
+    thesis_parser = advisor_sub.add_parser("thesis", help="Record an investment thesis")
+    thesis_parser.add_argument("symbol", help="Symbol for the thesis")
+    thesis_parser.add_argument(
+        "--direction", "-d", default="long", choices=["long", "short"],
+        help="Trade direction (default: long)",
+    )
+    thesis_parser.add_argument(
+        "--rationale", "-r", default="", help="Investment rationale",
+    )
+    thesis_parser.add_argument(
+        "--horizon", type=int, default=90, help="Time horizon in days (default: 90)",
+    )
+    thesis_parser.add_argument("--entry-price", type=float, help="Entry price")
+    thesis_parser.add_argument("--target", type=float, help="Target return %%")
+    thesis_parser.add_argument("--stop-loss", type=float, help="Stop loss %%")
+    thesis_parser.add_argument("--tags", help="Comma-separated tags")
+
+    advisor_sub.add_parser("evaluate", help="Evaluate open theses against current prices")
+
+    review_parser = advisor_sub.add_parser("review", help="Show thesis history and reviews")
+    review_parser.add_argument("--id", type=int, dest="thesis_id", help="Show specific thesis")
+    review_parser.add_argument(
+        "--status", choices=["open", "closed"], help="Filter by status",
+    )
+    review_parser.add_argument("--limit", type=int, default=20, help="Max results")
+
+    learn_parser = advisor_sub.add_parser("learn", help="Extract patterns / generate learning prompts")
+    learn_parser.add_argument(
+        "--prompt", action="store_true", help="Output learning context as LLM-ready text",
+    )
+    learn_parser.add_argument(
+        "--template", "-t", choices=["retrospective", "patterns", "scan"],
+        help="Wrap learning context in an advisor prompt template",
+    )
+
+    advisor_sub.add_parser("status", help="Show learning loop dashboard")
+
+    close_parser = advisor_sub.add_parser("close", help="Close an open thesis")
+    close_parser.add_argument("thesis_id", type=int, help="Thesis ID to close")
+    close_parser.add_argument("--reason", default="manual", help="Close reason")
 
     # Admin commands
     subparsers.add_parser("auth", help="Check authentication", parents=[common_parser])
@@ -449,6 +506,49 @@ def main(args: list | None = None) -> None:
             prompt=getattr(parsed, "prompt", False),
             template=getattr(parsed, "template", None),
         )
+    elif parsed.command == "advisor":
+        advisor_cmd = getattr(parsed, "advisor_command", None)
+        if advisor_cmd == "thesis":
+            tags = getattr(parsed, "tags", None)
+            tag_list = [t.strip() for t in tags.split(",")] if tags else None
+            cmd_advisor_thesis(
+                parsed.symbol,
+                direction=getattr(parsed, "direction", "long"),
+                rationale=getattr(parsed, "rationale", ""),
+                horizon=getattr(parsed, "horizon", 90),
+                entry_price=getattr(parsed, "entry_price", None),
+                target=getattr(parsed, "target", None),
+                stop_loss=getattr(parsed, "stop_loss", None),
+                tags=tag_list,
+                output_mode=output_mode,
+            )
+        elif advisor_cmd == "evaluate":
+            cmd_advisor_evaluate(output_mode=output_mode)
+        elif advisor_cmd == "review":
+            cmd_advisor_review(
+                thesis_id=getattr(parsed, "thesis_id", None),
+                status=getattr(parsed, "status", None),
+                limit=getattr(parsed, "limit", 20),
+                output_mode=output_mode,
+            )
+        elif advisor_cmd == "learn":
+            cmd_advisor_learn(
+                output_mode=output_mode,
+                prompt=getattr(parsed, "prompt", False),
+                template=getattr(parsed, "template", None),
+            )
+        elif advisor_cmd == "status":
+            cmd_advisor_status(output_mode=output_mode)
+        elif advisor_cmd == "close":
+            cmd_advisor_close(
+                parsed.thesis_id,
+                reason=getattr(parsed, "reason", "manual"),
+                output_mode=output_mode,
+            )
+        else:
+            # No subcommand — show advisor help
+            # Re-parse to get the advisor parser for help display
+            parser.parse_args(["advisor", "--help"])
     elif parsed.command == "auth":
         cmd_auth(output_mode=output_mode)
     elif parsed.command == "doctor":

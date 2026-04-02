@@ -94,6 +94,12 @@ response envelope. For the full historical snapshot/query contract, use
 | `buy [ACCOUNT] SYMBOL QTY` | | Buy shares |
 | `sell [ACCOUNT] SYMBOL QTY` | | Sell shares |
 | `orders [ACCOUNT]` | `ord` | Show open orders |
+| `advisor thesis SYMBOL` | `adv` | Record investment thesis |
+| `advisor evaluate` | `adv` | Evaluate open theses vs prices |
+| `advisor review [--id N]` | `adv` | Show thesis history/reviews |
+| `advisor learn [--template T]` | `adv` | Extract patterns / learning prompts |
+| `advisor status` | `adv` | Learning loop dashboard |
+| `advisor close ID` | `adv` | Close an open thesis |
 
 Default account: set `SCHWAB_DEFAULT_ACCOUNT` to omit `ACCOUNT` for buy/sell/orders.
 
@@ -160,9 +166,12 @@ src/schwab_client/
 │       ├── history.py      # history, query
 │       ├── trade.py        # buy, sell, orders (unified execute_trade)
 │       ├── admin.py        # auth, doctor, accounts
-│       └── report.py       # report, snapshot
+│       ├── report.py       # report, snapshot
+│       └── advisor_cmd.py  # advisor learning loop commands
 ├── _client/                # Internal client mixins / shared helpers
 ├── _history/               # Internal history schema + normalization + store
+│   ├── advisor_schema.py   # Advisor tables (theses, checkpoints, reviews, patterns)
+│   └── advisor_store.py    # Advisor SQLite store
 ├── auth.py                 # Portfolio API authentication
 ├── market_auth.py          # Market API authentication
 ├── history.py              # Public SQLite history API
@@ -173,6 +182,8 @@ src/core/                   # Pure business logic (no I/O)
 ├── portfolio_service.py    # Portfolio aggregation
 ├── market_service.py       # Market data processing
 ├── snapshot_service.py     # Manual-account merge + snapshot helpers
+├── advisor.py              # Advisor learning loop engine
+├── advisor_prompts.py      # LLM templates (retrospective, patterns, scan)
 └── errors.py               # Custom exceptions
 
 config/
