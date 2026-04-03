@@ -92,6 +92,7 @@ export-oriented wrapper that writes the same canonical snapshot JSON to disk.
 - `CLAUDE.md`: runtime/local operator notes
 - `docs/history.md`: canonical history/snapshot reference
 - `docs/account-config.md`: canonical account-config reference
+- `docs/advisor-sidecar.md`: proposed opt-in recommendation-learning sidecar plan
 
 ## Preferred extension points
 

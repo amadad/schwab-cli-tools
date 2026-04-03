@@ -68,6 +68,11 @@ Use `uv run schwab <command>` (or `schwab` if installed). Add `--json` for the
 response envelope. For the full historical snapshot/query contract, use
 `docs/history.md` as the canonical reference.
 
+Experimental recommendation-learning work is planned as a separate, opt-in
+sidecar; see `docs/advisor-sidecar.md`. Do not repurpose the main `schwab`
+CLI or canonical history flow for that experiment until the sidecar model
+proves useful.
+
 ### Commands
 
 | Command | Alias | Description |

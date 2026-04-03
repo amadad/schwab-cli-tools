@@ -298,6 +298,9 @@ and `private/reports/*.json` into the database.
 ## Architecture
 
 See [`docs/architecture.md`](docs/architecture.md) for module boundaries and extension points.
+The planned recommendation-learning adjunct is documented separately in
+[`docs/advisor-sidecar.md`](docs/advisor-sidecar.md) so it can evolve without
+changing the main CLI/history contract.
 
 ```
 src/schwab_client/
@@ -342,7 +345,8 @@ config/
 
 docs/
 ├── history.md              # Canonical snapshot/history/query reference
-└── account-config.md       # Canonical account config reference
+├── account-config.md       # Canonical account config reference
+└── advisor-sidecar.md      # Proposed opt-in recommendation-learning sidecar
 ```
 
 ## Development

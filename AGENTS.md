@@ -12,6 +12,7 @@
 - Use `src/schwab_client/paths.py` for path/env resolution.
 - Use `src/schwab_client/history.py` for SQLite persistence and query views.
 - Treat `docs/history.md` as the canonical reference for historical snapshot semantics.
+- Keep experimental recommendation-learning work in the planned sidecar path documented in `docs/advisor-sidecar.md` until it proves useful enough to merge into the main CLI/history flow.
 
 ## Architecture
 
