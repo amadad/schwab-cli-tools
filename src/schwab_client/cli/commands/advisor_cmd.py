@@ -76,7 +76,11 @@ def cmd_advisor_thesis(
     tags: list[str] | None = None,
     output_mode: str = "text",
 ) -> None:
-    """Record a new investment thesis."""
+    """Record a new investment thesis.
+
+    Auto-fetches entry price via yfinance if not provided.
+    Auto-captures market context (regime, VIX, sentiment) if available.
+    """
     command = "advisor-thesis"
     try:
         store = _get_advisor_store()
@@ -97,6 +101,8 @@ def cmd_advisor_thesis(
             tags=tags,
         )
 
+        actual_entry = result.get("entry_price", entry_price)
+
         if output_mode == "json":
             print_json_response(command, data={**result, "market_context": market_ctx})
             return
@@ -106,8 +112,9 @@ def cmd_advisor_thesis(
         print(f"  Symbol:    {result['symbol']}")
         print(f"  Direction: {direction}")
         print(f"  Horizon:   {horizon} days")
-        if entry_price:
-            print(f"  Entry:     ${entry_price:,.2f}")
+        if actual_entry:
+            source = "auto-fetched" if entry_price is None else "provided"
+            print(f"  Entry:     ${actual_entry:,.2f} ({source})")
         if target:
             print(f"  Target:    +{target}%")
         if stop_loss:
@@ -132,7 +139,11 @@ def cmd_advisor_evaluate(
     *,
     output_mode: str = "text",
 ) -> None:
-    """Evaluate all open theses against current market prices."""
+    """Evaluate all open theses against current market prices.
+
+    Uses Schwab market client if available, falls back to yfinance (no auth).
+    Always includes benchmark (SPY) comparison for alpha calculation.
+    """
     command = "advisor-evaluate"
     try:
         store = _get_advisor_store()
@@ -145,7 +156,7 @@ def cmd_advisor_evaluate(
                 print("No open theses to evaluate.")
             return
 
-        # Fetch current prices for all thesis symbols
+        # Try Schwab market client for prices, but don't fail if unavailable
         symbols = list({t["symbol"] for t in open_theses})
         price_lookup: dict[str, float] = {}
 
@@ -162,16 +173,8 @@ def cmd_advisor_evaluate(
                         price_lookup[symbol] = float(price)
                 except Exception:
                     continue
-        except Exception as exc:
-            if output_mode == "json":
-                print_json_response(
-                    command,
-                    success=False,
-                    error={"type": "MarketDataError", "message": f"Cannot fetch prices: {exc}"},
-                )
-            else:
-                print(f"Error: Cannot fetch market prices: {exc}")
-            return
+        except Exception:
+            pass  # yfinance fallback happens in evaluate_open_theses
 
         market_ctx = _get_market_context()
 
@@ -179,7 +182,7 @@ def cmd_advisor_evaluate(
 
         results = evaluate_open_theses(
             store,
-            price_lookup=price_lookup,
+            price_lookup=price_lookup if price_lookup else None,
             market_context=market_ctx,
         )
 
@@ -196,12 +199,26 @@ def cmd_advisor_evaluate(
             ret_str = f"{r['return_pct']:+.1f}%" if r.get("return_pct") is not None else "N/A"
             flags_str = " ".join(f"[{f}]" for f in r.get("flags", []))
 
+            # Format with benchmark comparison
+            entry = r.get("entry_price", 0) or 0
+            current = r.get("current_price", 0) or 0
+            days = r.get("days_open", 0) or 0
+            horizon = r.get("horizon_days", 0) or 0
+
             print(
                 f"  #{r['thesis_id']} {r['symbol']} ({r['direction']}): "
-                f"${r.get('entry_price', 0):,.2f} → ${r.get('current_price', 0):,.2f} "
-                f"= {ret_str}  ({r.get('days_open', 0):.0f}d/{r.get('horizon_days', 0)}d) "
+                f"${entry:,.2f} → ${current:,.2f} "
+                f"= {ret_str}  ({days:.0f}d/{horizon}d) "
                 f"{flags_str}"
             )
+
+            # Show alpha vs benchmark
+            bench = r.get("benchmark_return_pct")
+            alpha = r.get("alpha_pct")
+            if bench is not None and alpha is not None:
+                alpha_label = "alpha" if alpha >= 0 else "underperform"
+                print(f"    vs SPY: {bench:+.1f}% → {alpha_label}: {alpha:+.1f}%")
+
             if r.get("auto_closed"):
                 print(f"    → Auto-closed: {r['auto_closed']}")
             if r.get("regime_at_entry") != r.get("regime_current"):
@@ -433,7 +450,7 @@ def cmd_advisor_close(
 
 
 def _print_thesis_detail(thesis: dict[str, Any]) -> None:
-    """Print detailed thesis view with checkpoint history."""
+    """Print detailed thesis view with price trajectory and checkpoint history."""
     print(format_header(f"THESIS #{thesis['id']}: {thesis['symbol']}"))
     print(f"  Direction:  {thesis['direction']}")
     print(f"  Status:     {thesis['status']}")
@@ -455,6 +472,34 @@ def _print_thesis_detail(thesis: dict[str, Any]) -> None:
 
     if thesis.get("rationale"):
         print(f"\n  Rationale:\n    {thesis['rationale']}")
+
+    # Price trajectory (fetched live via yfinance)
+    try:
+        from src.core.advisor import enrich_thesis_trajectory
+
+        store = _get_advisor_store()
+        trajectory = enrich_thesis_trajectory(store, thesis["id"])
+        if trajectory and trajectory.get("return_pct") is not None:
+            print(format_header("PRICE TRAJECTORY"))
+            print(
+                f"  Return:        {trajectory['return_pct']:+.1f}% "
+                f"(${trajectory['entry_price']:,.2f} → ${trajectory['current_price']:,.2f})"
+            )
+            print(f"  Max Drawdown:  {trajectory.get('max_drawdown_pct', 0):.1f}%")
+            print(f"  Max Gain:      {trajectory.get('max_gain_pct', 0):+.1f}%")
+            print(f"  Peak→Trough:   {trajectory.get('peak_trough_drawdown_pct', 0):.1f}%")
+            if trajectory.get("benchmark_return_pct") is not None:
+                print(f"  SPY Return:    {trajectory['benchmark_return_pct']:+.1f}%")
+                print(f"  Alpha:         {trajectory.get('alpha_pct', 0):+.1f}%")
+            print(f"  Trading Days:  {trajectory.get('trading_days', 0)}")
+
+            path = trajectory.get("path", [])
+            if path:
+                print(f"\n  Price Path:")
+                for p in path:
+                    print(f"    {p['date']}: ${p['close']:,.2f} ({p['return_pct']:+.1f}%)")
+    except Exception:
+        pass  # Don't break thesis view if trajectory fails
 
     checkpoints = thesis.get("checkpoints", [])
     if checkpoints:

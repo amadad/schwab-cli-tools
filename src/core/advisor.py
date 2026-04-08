@@ -36,7 +36,16 @@ def record_thesis_with_context(
     market_context: dict[str, Any] | None = None,
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Record a thesis, extracting regime/signals from market context if provided."""
+    """Record a thesis, extracting regime/signals from market context if provided.
+
+    If entry_price is not provided, auto-fetches the current price via yfinance.
+    """
+    # Auto-fetch entry price if not provided
+    if entry_price is None:
+        from src.core.price_data import get_current_price
+
+        entry_price = get_current_price(symbol.upper())
+
     regime = None
     vix = None
     sentiment = None
@@ -58,7 +67,7 @@ def record_thesis_with_context(
             if k not in ("regime", "vix", "sentiment", "sector_rotation")
         }
 
-    return store.record_thesis(
+    result = store.record_thesis(
         symbol=symbol,
         direction=direction,
         rationale=rationale,
@@ -74,25 +83,41 @@ def record_thesis_with_context(
         tags=tags,
     )
 
+    if entry_price is not None:
+        result["entry_price"] = entry_price
+
+    return result
+
 
 def evaluate_open_theses(
     store: AdvisorStore,
     *,
-    price_lookup: dict[str, float],
+    price_lookup: dict[str, float] | None = None,
     market_context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Evaluate all open theses against current prices.
 
-    Args:
-        store: AdvisorStore instance
-        price_lookup: Dict of symbol -> current price
-        market_context: Current market state (regime, vix, etc.)
+    Uses price_lookup if provided, otherwise falls back to yfinance
+    (no auth needed). Always computes benchmark-relative returns.
 
     Returns:
-        List of evaluation results with return calculations and status flags.
+        List of evaluation results with return calculations, benchmark
+        comparison, and status flags.
     """
+    from src.core.price_data import compute_benchmark_return, get_prices_bulk
+
     open_theses = store.list_theses(status="open")
-    results: list[dict[str, Any]] = []
+    if not open_theses:
+        return []
+
+    # Build price lookup: merge provided prices with yfinance fallback
+    symbols = list({t["symbol"] for t in open_theses})
+    effective_prices = dict(price_lookup) if price_lookup else {}
+
+    missing = [s for s in symbols if s not in effective_prices]
+    if missing:
+        yf_prices = get_prices_bulk(missing)
+        effective_prices.update(yf_prices)
 
     regime = market_context.get("regime") if market_context else None
     vix = None
@@ -105,9 +130,11 @@ def evaluate_open_theses(
             vix = float(vix_data)
         sentiment = market_context.get("sentiment")
 
+    results: list[dict[str, Any]] = []
+
     for thesis in open_theses:
         symbol = thesis["symbol"]
-        current_price = price_lookup.get(symbol)
+        current_price = effective_prices.get(symbol)
         if current_price is None:
             results.append({
                 "thesis_id": thesis["id"],
@@ -124,6 +151,15 @@ def evaluate_open_theses(
                 return_pct = ((current_price - entry_price) / entry_price) * 100
             else:
                 return_pct = ((entry_price - current_price) / entry_price) * 100
+
+        # Benchmark comparison: what did SPY do over the same period?
+        benchmark_return = None
+        alpha = None
+        opened_at = thesis.get("opened_at")
+        if opened_at:
+            benchmark_return = compute_benchmark_return(opened_at)
+            if benchmark_return is not None and return_pct is not None:
+                alpha = return_pct - benchmark_return
 
         # Record checkpoint
         store.record_checkpoint(
@@ -161,13 +197,15 @@ def evaluate_open_theses(
             if thesis["regime_at_entry"] != regime:
                 flags.append("REGIME_SHIFTED")
 
-        result = {
+        result: dict[str, Any] = {
             "thesis_id": thesis["id"],
             "symbol": symbol,
             "direction": thesis["direction"],
             "entry_price": entry_price,
             "current_price": current_price,
             "return_pct": round(return_pct, 2) if return_pct is not None else None,
+            "benchmark_return_pct": round(benchmark_return, 2) if benchmark_return is not None else None,
+            "alpha_pct": round(alpha, 2) if alpha is not None else None,
             "days_open": days_open,
             "horizon_days": horizon,
             "regime_at_entry": thesis.get("regime_at_entry"),
@@ -185,6 +223,41 @@ def evaluate_open_theses(
     return results
 
 
+def enrich_thesis_trajectory(
+    store: AdvisorStore,
+    thesis_id: int,
+) -> dict[str, Any] | None:
+    """Enrich a thesis with full price trajectory and benchmark comparison.
+
+    Returns trajectory data including drawdown, max gain, and price path.
+    Used for retrospective analysis.
+    """
+    from src.core.price_data import compute_benchmark_return, compute_price_trajectory
+
+    thesis = store.get_thesis(thesis_id)
+    if not thesis:
+        return None
+
+    opened_at = thesis.get("opened_at")
+    closed_at = thesis.get("closed_at")
+    if not opened_at:
+        return None
+
+    trajectory = compute_price_trajectory(
+        thesis["symbol"],
+        opened_at,
+        closed_at,
+    )
+
+    benchmark_return = compute_benchmark_return(opened_at, closed_at)
+    if trajectory and benchmark_return is not None:
+        trajectory["benchmark_return_pct"] = round(benchmark_return, 2)
+        thesis_return = trajectory.get("return_pct", 0)
+        trajectory["alpha_pct"] = round(thesis_return - benchmark_return, 2)
+
+    return trajectory
+
+
 def compute_pattern_stats(
     store: AdvisorStore,
 ) -> list[dict[str, Any]]:
@@ -193,6 +266,9 @@ def compute_pattern_stats(
     Groups theses by entry conditions (regime, VIX band, sentiment) and
     computes aggregate performance statistics for each combination.
     This is the "learning" step — data-driven pattern discovery.
+
+    Where possible, enriches patterns with benchmark-relative alpha
+    so we learn what actually generated edge vs. just riding beta.
     """
     reviews = store._fetch_all(
         """
@@ -206,6 +282,8 @@ def compute_pattern_stats(
             t.sector_rotation_at_entry,
             t.time_horizon_days,
             t.tags,
+            t.opened_at,
+            t.closed_at,
             r.final_return_pct,
             r.was_correct,
             r.regime_aligned,
@@ -215,6 +293,23 @@ def compute_pattern_stats(
         WHERE r.final_return_pct IS NOT NULL
         """
     )
+
+    # Enrich with benchmark returns where we have dates
+    from src.core.price_data import compute_benchmark_return
+
+    for r in reviews:
+        opened = r.get("opened_at")
+        closed = r.get("closed_at")
+        if opened:
+            bench = compute_benchmark_return(opened, closed)
+            r["benchmark_return_pct"] = bench
+            if bench is not None and r.get("final_return_pct") is not None:
+                r["alpha_pct"] = r["final_return_pct"] - bench
+            else:
+                r["alpha_pct"] = None
+        else:
+            r["benchmark_return_pct"] = None
+            r["alpha_pct"] = None
 
     if not reviews:
         return []
@@ -365,13 +460,28 @@ def build_learning_prompt(store: AdvisorStore) -> str:
             )
         lines.append("")
 
-    # Recent reviews (lessons learned)
+    # Recent reviews (lessons learned) with benchmark context
     if ctx["recent_reviews"]:
         lines.append("### Recent Lessons (from reviewed theses)")
         for r in ctx["recent_reviews"]:
             correct = "correct" if r.get("was_correct") else "incorrect"
             ret = f"{r['final_return_pct']:.1f}%" if r.get("final_return_pct") is not None else "?"
-            lines.append(f"- {r['symbol']} ({r['direction']}): {correct}, {ret}")
+            line = f"- {r['symbol']} ({r['direction']}): {correct}, {ret}"
+
+            # Add benchmark context if we can compute it
+            opened = r.get("opened_at") or r.get("regime_at_entry")
+            if opened and r.get("final_return_pct") is not None:
+                try:
+                    from src.core.price_data import compute_benchmark_return
+
+                    bench = compute_benchmark_return(opened)
+                    if bench is not None:
+                        alpha = r["final_return_pct"] - bench
+                        line += f" (SPY: {bench:+.1f}%, alpha: {alpha:+.1f}%)"
+                except Exception:
+                    pass
+
+            lines.append(line)
             if r.get("lessons"):
                 lines.append(f"  Lesson: {r['lessons']}")
         lines.append("")

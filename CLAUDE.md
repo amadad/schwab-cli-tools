@@ -94,9 +94,9 @@ response envelope. For the full historical snapshot/query contract, use
 | `buy [ACCOUNT] SYMBOL QTY` | | Buy shares |
 | `sell [ACCOUNT] SYMBOL QTY` | | Sell shares |
 | `orders [ACCOUNT]` | `ord` | Show open orders |
-| `advisor thesis SYMBOL` | `adv` | Record investment thesis |
-| `advisor evaluate` | `adv` | Evaluate open theses vs prices |
-| `advisor review [--id N]` | `adv` | Show thesis history/reviews |
+| `advisor thesis SYMBOL` | `adv` | Record investment thesis (auto-fetches price) |
+| `advisor evaluate` | `adv` | Evaluate open theses vs prices + SPY alpha |
+| `advisor review [--id N]` | `adv` | Show thesis history/reviews with trajectory |
 | `advisor learn [--template T]` | `adv` | Extract patterns / learning prompts |
 | `advisor status` | `adv` | Learning loop dashboard |
 | `advisor close ID` | `adv` | Close an open thesis |
@@ -184,6 +184,7 @@ src/core/                   # Pure business logic (no I/O)
 ├── snapshot_service.py     # Manual-account merge + snapshot helpers
 ├── advisor.py              # Advisor learning loop engine
 ├── advisor_prompts.py      # LLM templates (retrospective, patterns, scan)
+├── price_data.py           # yfinance price data (auth-free, benchmark comparison)
 └── errors.py               # Custom exceptions
 
 config/
