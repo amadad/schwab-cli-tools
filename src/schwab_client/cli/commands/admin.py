@@ -3,15 +3,22 @@ Admin commands: auth, doctor, accounts.
 """
 
 import os
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 
 from config.secure_account_config import ACCOUNTS_FILE, secure_config
-from src.core.errors import PortfolioError
+from src.core.errors import ConfigError, PortfolioError
 
-from ...auth import TokenManager, resolve_data_dir, resolve_token_path
-from ...market_auth import resolve_market_token_path
+from ...auth import (
+    TokenManager,
+    authenticate_interactive,
+    authenticate_manual,
+    resolve_data_dir,
+    resolve_token_path,
+)
+from ...market_auth import authenticate_market_data, resolve_market_token_path
 from ..output import format_header, handle_cli_error, print_json_response
 
 
@@ -47,6 +54,82 @@ def cmd_auth(*, output_mode: str = "text") -> None:
 
     except (PortfolioError, httpx.HTTPStatusError) as exc:
         handle_cli_error(exc, output_mode=output_mode, command=command)
+
+
+def cmd_auth_login(
+    *,
+    output_mode: str = "text",
+    rail: str = "portfolio",
+    force: bool = False,
+    manual: bool = False,
+    interactive: bool = False,
+    browser: str | None = None,
+    timeout: float = 300.0,
+) -> None:
+    """Authenticate against the portfolio or market auth rail."""
+    command = "auth-login"
+
+    if output_mode == "json":
+        handle_cli_error(
+            PortfolioError(
+                "Interactive login does not support --json. "
+                "Run `schwab auth` / `schwab doctor --json` before or after login instead."
+            ),
+            output_mode=output_mode,
+            command=command,
+        )
+        return
+
+    try:
+        if rail == "market":
+            manager = TokenManager(token_path=resolve_market_token_path())
+        else:
+            manager = TokenManager()
+
+        info = manager.get_token_info()
+        if info.get("exists"):
+            if not info.get("valid", True):
+                print("Existing token expired or invalid. Removing it...")
+                manager.delete_tokens()
+            elif not force:
+                print("Existing valid token found.")
+                print("Use --force to re-authenticate.")
+                return
+            else:
+                print("Re-authenticating (forced).")
+
+        if rail == "market":
+            args = SimpleNamespace(
+                force=force,
+                manual=manual,
+                interactive=interactive,
+                browser=browser,
+                timeout=timeout,
+            )
+            authenticate_market_data(args)
+        else:
+            if manual:
+                authenticate_manual()
+            else:
+                authenticate_interactive(
+                    interactive=interactive,
+                    requested_browser=browser,
+                    callback_timeout=timeout,
+                )
+
+        info = manager.get_token_info()
+        print()
+        print(f"Authenticated {rail} rail successfully.")
+        if info.get("expires"):
+            print(
+                f"Token expires: {info['expires']} "
+                f"({info.get('expires_in_days', 0)} days remaining)"
+            )
+        print(f"Token DB: {manager.db_path}")
+        print()
+    except (PortfolioError, httpx.HTTPStatusError, ConfigError) as exc:
+        handle_cli_error(exc, output_mode=output_mode, command=command)
+
 
 
 def cmd_doctor(*, output_mode: str = "text") -> None:

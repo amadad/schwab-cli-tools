@@ -215,6 +215,34 @@ class TestAccountsCommandJSON:
         assert "accounts" in data["data"]
 
 
+class TestAuthRouting:
+    """Tests for root auth command routing."""
+
+    @patch("src.schwab_client.cli.cmd_auth")
+    def test_auth_defaults_to_status(self, mock_cmd_auth):
+        from src.schwab_client.cli import main
+
+        main(["auth"])
+
+        mock_cmd_auth.assert_called_once_with(output_mode="text")
+
+    @patch("src.schwab_client.cli.cmd_auth_login")
+    def test_auth_login_routes_to_market_rail(self, mock_cmd_auth_login):
+        from src.schwab_client.cli import main
+
+        main(["auth", "login", "--market", "--manual", "--force"])
+
+        mock_cmd_auth_login.assert_called_once_with(
+            output_mode="text",
+            rail="market",
+            force=True,
+            manual=True,
+            interactive=False,
+            browser=None,
+            timeout=300.0,
+        )
+
+
 class TestAuthAdminCommands:
     """Tests for auth/doctor diagnostic output."""
 
@@ -307,6 +335,28 @@ class TestAuthAdminCommands:
         assert payload["command"] == "doctor"
         assert payload["data"]["portfolio"]["storage"]["db_path"] == "/tmp/tokens.db"
         assert payload["data"]["market"]["storage"]["locking"] == "sqlite_begin_exclusive"
+
+
+@patch("src.schwab_client.cli.commands.admin.authenticate_interactive")
+@patch("src.schwab_client.cli.commands.admin.TokenManager")
+def test_cmd_auth_login_portfolio_reauth(mock_manager_cls, mock_authenticate_interactive):
+    from src.schwab_client.cli.commands.admin import cmd_auth_login
+
+    manager = MagicMock()
+    manager.get_token_info.side_effect = [
+        {"exists": True, "valid": False},
+        {"exists": True, "valid": True, "expires": "2026-01-01T00:00:00", "expires_in_days": 6},
+    ]
+    manager.db_path = "/tmp/tokens.db"
+    mock_manager_cls.return_value = manager
+
+    output = io.StringIO()
+    with redirect_stdout(output):
+        cmd_auth_login(output_mode="text", rail="portfolio", manual=False)
+
+    manager.delete_tokens.assert_called_once()
+    mock_authenticate_interactive.assert_called_once()
+    assert "Authenticated portfolio rail successfully." in output.getvalue()
 
 
 class TestContextCommand:

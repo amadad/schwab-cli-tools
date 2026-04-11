@@ -1,6 +1,6 @@
 """CLI command modules."""
 
-from .admin import cmd_accounts, cmd_auth, cmd_doctor
+from .admin import cmd_accounts, cmd_auth, cmd_auth_login, cmd_doctor
 from .context_cmd import cmd_context
 from .history import cmd_history, cmd_query
 from .market import (
@@ -55,6 +55,7 @@ __all__ = [
     "cmd_orders",
     # Admin
     "cmd_auth",
+    "cmd_auth_login",
     "cmd_doctor",
     "cmd_accounts",
     # History

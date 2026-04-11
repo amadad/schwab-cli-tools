@@ -46,6 +46,7 @@ from .commands import (
     cmd_accounts,
     cmd_allocation,
     cmd_auth,
+    cmd_auth_login,
     cmd_balance,
     cmd_buy,
     cmd_context,
@@ -266,7 +267,35 @@ Examples:
     )
 
     # Admin commands
-    subparsers.add_parser("auth", help="Check authentication", parents=[common_parser])
+    auth_parser = subparsers.add_parser("auth", help="Check authentication or log in", parents=[common_parser])
+    auth_parser.add_argument(
+        "auth_action",
+        nargs="?",
+        choices=["status", "login"],
+        default="status",
+        help="Auth action (default: status)",
+    )
+    auth_rail_group = auth_parser.add_mutually_exclusive_group()
+    auth_rail_group.add_argument(
+        "--portfolio",
+        action="store_true",
+        help="Use the portfolio auth rail (default)",
+    )
+    auth_rail_group.add_argument(
+        "--market",
+        action="store_true",
+        help="Use the market-data auth rail",
+    )
+    auth_parser.add_argument("--force", action="store_true", help="Re-authenticate even if a valid token exists")
+    auth_parser.add_argument("--manual", action="store_true", help="Use headless/manual copy-paste auth flow")
+    auth_parser.add_argument("--interactive", action="store_true", help="Require ENTER before opening the browser")
+    auth_parser.add_argument("--browser", help="Browser name for webbrowser (e.g. chrome, firefox)")
+    auth_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=300.0,
+        help="Callback timeout in seconds (login only)",
+    )
     subparsers.add_parser("doctor", aliases=["dr"], help="Run diagnostics", parents=[common_parser])
     subparsers.add_parser("accounts", help="List accounts", parents=[common_parser])
 
@@ -450,7 +479,20 @@ def main(args: list | None = None) -> None:
             template=getattr(parsed, "template", None),
         )
     elif parsed.command == "auth":
-        cmd_auth(output_mode=output_mode)
+        auth_action = getattr(parsed, "auth_action", "status")
+        auth_rail = "market" if getattr(parsed, "market", False) else "portfolio"
+        if auth_action == "login":
+            cmd_auth_login(
+                output_mode=output_mode,
+                rail=auth_rail,
+                force=getattr(parsed, "force", False),
+                manual=getattr(parsed, "manual", False),
+                interactive=getattr(parsed, "interactive", False),
+                browser=getattr(parsed, "browser", None),
+                timeout=getattr(parsed, "timeout", 300.0),
+            )
+        else:
+            cmd_auth(output_mode=output_mode)
     elif parsed.command == "doctor":
         cmd_doctor(output_mode=output_mode)
     elif parsed.command == "accounts":
