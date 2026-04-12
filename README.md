@@ -1,4 +1,4 @@
-# schwab-cli-tools
+# cli-schwab
 
 Agent-friendly Schwab CLI tools for portfolio analysis, market insights, and trading.
 
@@ -11,21 +11,58 @@ your own risk and ensure you comply with Schwab's terms and API policies.
 ## Quick Start
 
 ```bash
-git clone https://github.com/amadad/schwab-cli-tools.git
-cd schwab-cli-tools
+git clone https://github.com/amadad/cli-schwab.git
+cd cli-schwab
 uv sync
 cp .env.example .env
 cp config/accounts.template.json config/accounts.json
 mkdir -p tokens private
 ```
 
-## Authentication
+## Install for agents
+
+Install the CLI so it works from any folder, not just inside this repo:
 
 ```bash
-uv run schwab-auth               # Portfolio API (opens browser)
-uv run schwab-auth --manual      # For headless/remote machines (copy-paste flow)
-uv run schwab-market-auth        # Market data API (opens browser)
-uv run schwab-market-auth --manual  # For headless/remote machines (copy-paste flow)
+cd /path/to/cli-schwab
+uv tool install -e .
+# or: pipx install .
+```
+
+Verify the installed command:
+
+```bash
+command -v schwab
+schwab --help
+schwab-advisor --help   # optional sidecar CLI
+python scripts/verify_agent_cli.py --account <account-alias>
+```
+
+Optional shell completion (requires `argcomplete`):
+
+```bash
+activate-global-python-argcomplete --user
+# or per shell session:
+eval "$(register-python-argcomplete schwab)"
+```
+
+## Authentication
+
+Preferred root-CLI flow:
+
+```bash
+schwab auth                      # Auth status (same as `schwab auth status`)
+schwab auth login --portfolio    # Portfolio API (opens browser)
+schwab auth login --portfolio --manual
+schwab auth login --market       # Market data API (opens browser)
+schwab auth login --market --manual
+```
+
+Compatibility shims still work too:
+
+```bash
+uv run schwab-auth
+uv run schwab-market-auth
 ```
 
 ### thinkorswim Enablement (Required for Trading)
@@ -47,13 +84,15 @@ locally. It prints a URL you can open on any device (phone, laptop, etc.), then 
 you to paste the callback URL. Both auth commands support this flag.
 
 Market commands (`vix`, `indices`, `sectors`, `market`, `movers`, `futures`) require
-the market auth flow. Token JSON files are stored under `~/.schwab-cli-tools/tokens`
+the market auth flow. Token JSON files are stored under `~/.cli-schwab/tokens`
 by default, with a sibling SQLite `tokens.db` sidecar used for local locking and
-cached token metadata. Refresh tokens expire after 7 days.
+cached token metadata. `schwab auth --json` and `schwab doctor --json` expose that
+storage state for diagnostics. Refresh tokens expire after 7 days.
 
 ## CLI Commands
 
 All commands support `--json` for machine-readable output.
+Prefer narrow terminal output and explicit file output for large payloads.
 
 ### Portfolio Commands
 
@@ -101,7 +140,15 @@ schwab score AAPL          # Quality framework score for a symbol
 schwab context             # Assemble portfolio + market + policy context
 schwab ctx --prompt        # LLM-ready prompt block
 schwab context -t memo     # Wrap the context in a memo template
+schwab context --json --output ./context.json  # Write the full context to a file
 ```
+
+`schwab context --json` is the agent-facing context envelope. It includes
+`market`, `market_available`, `recent_transactions`, `manual_accounts_included`,
+`history`, and `errors`. If market auth is unavailable, the command still succeeds
+and surfaces that degradation in `errors` instead of failing silently. Add
+`--output PATH` when you want the full payload or rendered prompt/template written
+to disk while the CLI returns a compact pointer.
 
 ### Admin Commands
 
@@ -119,6 +166,8 @@ schwab history                               # Recent snapshot runs
 schwab hist --dataset portfolio --limit 10   # Portfolio history (alias)
 schwab history --dataset positions --symbol AAPL
 schwab history --dataset market              # Market context history
+schwab history --snapshot-id 50 --json       # Read one exact canonical snapshot
+schwab history --snapshot-id 50 --output ./snapshot-50.json --json
 schwab history --import-defaults             # Backfill private/snapshots + private/reports
 schwab query "SELECT * FROM portfolio_history LIMIT 5"
 ```
@@ -135,6 +184,26 @@ schwab report              # Export-oriented wrapper around snapshot
 schwab report -o ./out.json
 schwab report --no-market
 ```
+
+### Advisor Sidecar Commands
+
+The advisor loop is intentionally separate from the main `schwab` CLI. It writes only
+to its own SQLite store under `./private/advisor/advisor.db` by default.
+
+```bash
+schwab-advisor status --json
+schwab-advisor recommend --json
+schwab-advisor feedback 12 --status followed --json
+schwab-advisor note 12 "buffer constrained by RMD timing" --json
+schwab-advisor evaluate --json
+schwab-advisor review 12 --json
+```
+
+`recommend` stores the source snapshot provenance, raw prompt/response artifacts, and a
+snapshot-backed `baseline_state_json`. `evaluate` compares the run against the first later
+snapshot on or after the horizon, skips when required data is missing, and treats
+explicitly ignored recommendations as `insufficient_data` rather than scoring them like
+executed actions.
 
 ### Trade Commands
 
@@ -170,6 +239,21 @@ schwab ord                                   # Alias
 | snapshot | snap |
 | orders | ord |
 
+## Agent verification checklist
+
+Test the installed CLI the same way a later agent will use it:
+
+```bash
+command -v schwab
+schwab --help
+schwab-advisor --help
+schwab doctor --json
+schwab history --json --limit 1
+schwab snapshot --json --output ./snapshot.json
+schwab-advisor status --json
+schwab buy <account-alias> AAPL 1 --dry-run --json
+```
+
 ## Trade Safety
 
 **Live trading is DISABLED by default.** This is a critical safety feature.
@@ -189,9 +273,15 @@ Additional safeguards:
 - `--dry-run` always works (preview mode)
 - Live trades require typing "CONFIRM" (cannot be bypassed)
 - JSON mode cannot execute live trades
-- All trade attempts are logged to `~/.schwab-cli-tools/trade_audit.log`
+- All trade attempts are logged to `~/.cli-schwab/trade_audit.log`
 
 For automation: Use `--dry-run` only. Never enable live trading in automated environments.
+
+## Shortest reusable prompt
+
+```text
+Use the cli-schwab workflow: run `schwab doctor --json`, then `schwab snapshot --json` or `schwab history --json` as needed, keep output narrow, and only use `--dry-run` for trades.
+```
 
 ## Configuration
 
@@ -204,14 +294,14 @@ export SCHWAB_OUTPUT=json
 # Default account alias for buy/sell/orders
 export SCHWAB_DEFAULT_ACCOUNT=acct_trading
 
-# Data directory (defaults to ~/.schwab-cli-tools)
-export SCHWAB_CLI_DATA_DIR=~/.schwab-cli-tools
+# Data directory (defaults to ~/.cli-schwab)
+export SCHWAB_CLI_DATA_DIR=~/.cli-schwab
 
 # Report directory
-export SCHWAB_REPORT_DIR=~/.schwab-cli-tools/reports
+export SCHWAB_REPORT_DIR=~/.cli-schwab/reports
 
 # History database (defaults to ./private/history/schwab_history.db when available)
-export SCHWAB_HISTORY_DB_PATH=~/.schwab-cli-tools/history/schwab_history.db
+export SCHWAB_HISTORY_DB_PATH=~/.cli-schwab/history/schwab_history.db
 
 # Optional manual accounts file for holistic household totals
 export SCHWAB_MANUAL_ACCOUNTS_PATH=./private/notes/manual_accounts.json
@@ -221,9 +311,13 @@ export SCHWAB_MANUAL_ACCOUNTS_PATH=./private/notes/manual_accounts.json
 export SCHWAB_POLICY_PATH=./private/policy.json
 
 # Token paths (override data dir)
-export SCHWAB_TOKEN_PATH=~/.schwab-cli-tools/tokens/schwab_token.json
-export SCHWAB_MARKET_TOKEN_PATH=~/.schwab-cli-tools/tokens/schwab_market_token.json
+export SCHWAB_TOKEN_PATH=~/.cli-schwab/tokens/schwab_token.json
+export SCHWAB_MARKET_TOKEN_PATH=~/.cli-schwab/tokens/schwab_market_token.json
 # A local SQLite sidecar (tokens.db) is created next to the token files automatically
+
+# Advisor sidecar
+export SCHWAB_ADVISOR_DB_PATH=./private/advisor/advisor.db
+export SCHWAB_ADVISOR_MODEL_COMMAND='codex exec -m gpt-5.4 --skip-git-repo-check --cd .'
 
 # Trade safety (NEVER enable in automation)
 export SCHWAB_ALLOW_LIVE_TRADES=true
@@ -298,12 +392,13 @@ and `private/reports/*.json` into the database.
 ## Architecture
 
 See [`docs/architecture.md`](docs/architecture.md) for module boundaries and extension points.
-The planned recommendation-learning adjunct is documented separately in
+The opt-in recommendation-learning adjunct is documented separately in
 [`docs/advisor-sidecar.md`](docs/advisor-sidecar.md) so it can evolve without
 changing the main CLI/history contract.
 
 ```
 src/schwab_client/
+├── advisor_cli.py          # Optional schwab-advisor entrypoint
 ├── cli/                    # Modular CLI package
 │   ├── __init__.py         # Entry point, argparse, routing
 │   ├── context.py          # Cached clients, trade logger
@@ -316,6 +411,7 @@ src/schwab_client/
 │       ├── admin.py        # auth, doctor, accounts
 │       ├── context_cmd.py  # context prompt / memo assembly
 │       └── report.py       # report, snapshot
+├── _advisor/               # Advisor sidecar schema + persistence
 ├── _client/                # Internal client mixins / shared helpers
 ├── _history/               # Internal history schema + normalization + store
 ├── auth.py                 # Portfolio API authentication
@@ -325,6 +421,10 @@ src/schwab_client/
 └── client.py               # Public SchwabClientWrapper surface
 
 src/core/                   # Business logic and portfolio analysis helpers
+├── advisor_models.py       # Typed recommendation payloads
+├── advisor_prompts.py      # Structured recommendation prompts
+├── advisor_scoring.py      # Deterministic outcome scoring
+├── advisor_sidecar.py      # Sidecar orchestration
 ├── context.py              # Portfolio context assembly
 ├── portfolio_service.py    # Portfolio aggregation
 ├── market_service.py       # Market data processing
@@ -346,7 +446,8 @@ config/
 docs/
 ├── history.md              # Canonical snapshot/history/query reference
 ├── account-config.md       # Canonical account config reference
-└── advisor-sidecar.md      # Proposed opt-in recommendation-learning sidecar
+├── advisor-sidecar.md      # Experimental opt-in recommendation-learning sidecar
+└── _solutions.md           # Append-only solved-problems log
 ```
 
 ## Development
@@ -380,7 +481,7 @@ eval "$(register-python-argcomplete schwab)"
 2. Never hardcode account numbers or API keys
 3. Refresh tokens expire after 7 days - re-run auth commands
 4. Use `schwab doctor` to check configuration status
-5. Trade audit logs are written to `~/.schwab-cli-tools/trade_audit.log`
+5. Trade audit logs are written to `~/.cli-schwab/trade_audit.log`
 
 ## Exit Codes
 

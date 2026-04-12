@@ -41,7 +41,7 @@ def resolve_data_dir() -> Path:
     env_dir = os.getenv(DATA_DIR_ENV)
     if env_dir:
         return Path(env_dir).expanduser()
-    return Path.home() / ".schwab-cli-tools"
+    return Path.home() / ".cli-schwab"
 
 
 def resolve_token_path(
@@ -80,7 +80,7 @@ def _parse_datetime_like(value: Any) -> datetime | None:
 
 
 def _derive_token_window(tokens: dict[str, Any]) -> tuple[datetime, datetime] | None:
-    """Return token creation and refresh-expiry timestamps when available."""
+    """Return token creation and effective-expiry timestamps when available."""
     creation_time = _parse_datetime_like(tokens.get("creation_timestamp"))
     token_data = tokens.get("token", {})
     expires_at = token_data.get("expires_at") if isinstance(token_data, dict) else None
@@ -88,7 +88,9 @@ def _derive_token_window(tokens: dict[str, Any]) -> tuple[datetime, datetime] | 
 
     if access_expiry is not None:
         created = creation_time or (access_expiry - timedelta(minutes=30))
-        return created, created + timedelta(days=7)
+        has_refresh_token = bool(token_data.get("refresh_token")) if isinstance(token_data, dict) else False
+        effective_expiry = created + timedelta(days=7) if has_refresh_token else access_expiry
+        return created, effective_expiry
 
     if creation_time is not None:
         return creation_time, creation_time + timedelta(days=7)

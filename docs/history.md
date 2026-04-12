@@ -4,7 +4,7 @@ Canonical reference for the historical portfolio subsystem.
 
 ## Purpose
 
-`schwab-cli-tools` now treats **SQLite history** as the canonical store for time-series
+`cli-schwab` now treats **SQLite history** as the canonical store for time-series
 portfolio and market context.
 
 Use cases:
@@ -60,6 +60,16 @@ uv run schwab history --dataset portfolio --limit 10
 uv run schwab history --dataset positions --symbol AAPL
 uv run schwab history --dataset market
 ```
+
+### Read or export one exact snapshot
+
+```bash
+uv run schwab history --snapshot-id 50 --json
+uv run schwab history --snapshot-id 50 --output ./private/reports/snapshot-50.json --json
+```
+
+Use `--snapshot-id` when an agent already has a stable snapshot id from discovery and
+needs the full canonical payload or a file export for a large response.
 
 ### Query history through SQL
 

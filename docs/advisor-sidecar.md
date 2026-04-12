@@ -1,10 +1,27 @@
 # Advisor Sidecar Plan
 
-Status: proposed
+Status: implemented, experimental
 
-This document defines a **sidecar recommendation-learning system** for `schwab-cli-tools`.
+This document defines the **sidecar recommendation-learning system** for `cli-schwab`.
 It is intentionally designed to sit **next to** the existing CLI, snapshot, context,
 and history workflows without disrupting them.
+
+## Current status
+
+Implemented today:
+
+- separate `schwab-advisor` entrypoint
+- dedicated SQLite store at `./private/advisor/advisor.db`
+- structured recommendation capture with raw prompt/response artifacts
+- operator feedback and freeform notes
+- deterministic policy-health evaluation against later snapshots
+- snapshot-backed provenance via `source_snapshot_id`, `source_history_db_path`, and `baseline_state_json`
+
+Still intentionally unfinished:
+
+- aggregate learning views / leaderboards
+- retrospective narrative generation
+- prompt optimization or autoresearch on sidecar prompts
 
 ## Objective
 
@@ -67,15 +84,18 @@ This fits the repo better than a generic single-name thesis journal.
 
 ## V1 commands
 
-The sidecar CLI should be a separate entrypoint:
+The sidecar CLI is a separate entrypoint:
 
 ```bash
 uv run schwab-advisor recommend --json
 uv run schwab-advisor feedback 12 --status followed --json
+uv run schwab-advisor note 12 "buffer constrained by RMD timing" --json
 uv run schwab-advisor evaluate --json
 uv run schwab-advisor status --json
 uv run schwab-advisor review 12 --json
 ```
+
+Current commands: `recommend`, `feedback`, `note`, `evaluate`, `status`, and `review`.
 
 ## V1 non-goals
 
@@ -94,7 +114,7 @@ Explicitly out of scope for V1:
 
 ## Sidecar CLI
 
-Add a new script entrypoint:
+The sidecar ships as a separate script entrypoint:
 
 ```toml
 [project.scripts]
@@ -103,7 +123,7 @@ schwab-advisor = "src.schwab_client.advisor_cli:main"
 
 This keeps the main `schwab` parser untouched.
 
-## Proposed file layout
+## Current file layout
 
 ```text
 src/schwab_client/
@@ -147,7 +167,7 @@ Every run should record:
 - `assembled_at`
 - whether manual accounts were included
 - whether market data was available
-- model/prompt version used
+- the model command and raw prompt used
 
 ---
 
@@ -177,51 +197,25 @@ This keeps the experiment isolated from the canonical history store.
 
 One row per recommendation episode.
 
-Suggested fields:
+Current fields include:
 
-- `id`
-- `created_at`
-- `source_snapshot_id`
-- `source_history_db_path`
-- `template_name`
-- `model_name`
-- `market_available`
-- `manual_accounts_included`
-- `market_regime`
-- `vix_value`
-- `vix_band`
-- `summary`
-- `primary_action_json`
-- `features_json`
-- `context_json`
-- `raw_prompt`
-- `raw_response`
-- `status` (`open|evaluated|archived`)
-
-### `recommendation_actions`
-
-One row per action attached to a run.
-
-Suggested fields:
-
-- `id`
-- `run_id`
-- `priority`
-- `action_type`
-- `account_alias`
-- `bucket`
-- `symbol`
-- `amount`
-- `timing`
-- `rationale`
-- `expected_effect`
-- `is_primary`
+- `id`, `created_at`, `assembled_at`
+- `source_snapshot_id`, `source_history_db_path`
+- `recommendation_type`, `thesis`, `rationale`
+- `target_type`, `target_id`, `direction`, `horizon_days`
+- `benchmark_symbol`, `baseline_price`
+- `baseline_state_json`
+- `market_regime`, `vix_value`, `confidence`, `tags_json`
+- `raw_prompt`, `raw_response`, `parsed_response_json`
+- `market_available`, `manual_accounts_included`
+- `model_command`
+- `status` (`open|evaluated` today)
 
 ### `recommendation_feedback`
 
 Operator feedback on whether the recommendation was followed.
 
-Suggested fields:
+Fields:
 
 - `id`
 - `run_id`
@@ -229,37 +223,36 @@ Suggested fields:
 - `status` (`followed|partially_followed|ignored|unknown`)
 - `notes`
 
-### `recommendation_outcomes`
+### `recommendation_evaluations`
 
 Evaluation result for a run.
 
-Suggested fields:
+Current fields include:
+
+- `id`, `run_id`, `evaluated_at`
+- `evaluation_snapshot_id`
+- `horizon_days`
+- `price_then`, `price_now`, `benchmark_then`, `benchmark_now`
+- `absolute_return`, `benchmark_return`, `excess_return`
+- `policy_score_before`, `policy_score_after`, `delta_score`
+- `feedback_status`
+- `outcome` (`improved|neutral|worsened|insufficient_data`)
+- `notes`
+
+### `recommendation_notes`
+
+Freeform lessons or operator notes attached to a run.
+
+Fields:
 
 - `id`
 - `run_id`
-- `evaluated_at`
-- `evaluation_snapshot_id`
-- `horizon_days`
-- `policy_score_before`
-- `policy_score_after`
-- `delta_score`
-- `outcome_label` (`improved|neutral|worsened|insufficient_data`)
-- `action_metrics_json`
-- `notes`
+- `created_at`
+- `note_type`
+- `body`
 
-## Views
-
-### `open_recommendations`
-
-Runs needing feedback or evaluation.
-
-### `recommendation_history`
-
-Denormalized view of run + feedback + outcome.
-
-### `recommendation_leaderboard`
-
-Aggregates by action type / regime / VIX band after enough episodes accumulate.
+Action-specific tables and aggregate leaderboards are intentionally deferred until the
+recommendation-episode model proves useful.
 
 ---
 
@@ -269,52 +262,36 @@ Recommendations must be machine-readable.
 
 ## JSON shape
 
+`schwab-advisor recommend` expects a single normalized recommendation object:
+
 ```json
 {
-  "summary": "Most important signal and implication",
-  "primary_action": {
-    "action_type": "deploy_cash",
-    "account": "Inherited IRA (Mom)",
-    "symbol": "VTI",
-    "amount": 50000,
-    "timing": "this_week",
-    "rationale": "Cash is above target and regime is risk_off, so phase in"
-  },
-  "secondary_actions": [
-    {
-      "action_type": "distribute",
-      "account": "Inherited IRA (Dad)",
-      "amount": 10000,
-      "timing": "this_month",
-      "rationale": "Buffer is below the minimum threshold"
-    }
-  ],
-  "leave_alone": ["Index", "Business"],
-  "confidence": 0.74
+  "thesis": "Deploy excess inherited-IRA cash into broad index exposure over the next month.",
+  "rationale": "Cash is above target, policy health is being dragged down by idle cash, and regime is risk_off rather than panic.",
+  "recommendation_type": "portfolio",
+  "target_type": "account",
+  "target_id": "acct_inherited_ira",
+  "direction": "deploy",
+  "horizon_days": 30,
+  "benchmark_symbol": "SPY",
+  "confidence": 0.74,
+  "tags": ["cash", "policy", "deployment"]
 }
 ```
 
-## Required action fields
+## Required fields
 
-Each action should support:
-
-- `action_type`
-- `account`
-- `symbol` optional
-- `amount` optional
-- `timing`
+- `thesis`
 - `rationale`
+- `recommendation_type`
+- `target_type`
+- `target_id`
+- `direction`
+- `horizon_days`
 
-## Suggested action types
+`benchmark_symbol`, `confidence`, and `tags` are optional.
 
-- `deploy_cash`
-- `distribute`
-- `rebalance`
-- `hold`
-- `buy`
-- `sell`
-- `trim`
-- `review`
+Malformed or incomplete model output is rejected instead of being silently defaulted.
 
 ---
 
@@ -408,12 +385,15 @@ uv run schwab snapshot --json
 uv run schwab-advisor recommend --json
 ```
 
-This should:
+This command currently:
 
-- read the latest or specified snapshot
-- assemble current context
-- generate a structured recommendation
-- persist the episode in the sidecar DB
+- captures a fresh canonical snapshot via `schwab snapshot --json`
+- layers in context-only inputs such as regime, Polymarket, Lynch, YTD distributions, and recent transactions
+- generates a structured recommendation
+- persists the run plus raw prompt/response artifacts in the sidecar DB
+
+The stored `baseline_state_json` is rebuilt from the captured source snapshot so the
+recorded baseline matches `source_snapshot_id`.
 
 ## Step 3: record operator feedback
 
@@ -427,7 +407,11 @@ uv run schwab-advisor feedback 12 --status followed --json
 uv run schwab-advisor evaluate --json
 ```
 
-This should compare the original run with a later snapshot and compute an outcome.
+This compares the original run with the first later snapshot on or after the recommendation horizon and computes a deterministic outcome.
+
+It skips evaluation when no later snapshot exists or when required distribution-history
+inputs are missing. Recommendations explicitly marked `ignored` are recorded as
+`insufficient_data` rather than scored like executed actions.
 
 ## Step 5: inspect results
 
@@ -438,118 +422,73 @@ uv run schwab-advisor review 12 --json
 
 ---
 
-# Phased implementation plan
+# Implementation status and roadmap
 
-## PR 0 — Sidecar scaffold
+## Completed
 
-- [ ] Add `docs/advisor-sidecar.md`
-- [ ] Add `schwab-advisor` CLI entrypoint in `pyproject.toml`
-- [ ] Add `src/schwab_client/advisor_cli.py`
-- [ ] Add `SCHWAB_ADVISOR_DB_PATH` resolution
-- [ ] Add sidecar DB schema in `src/schwab_client/_advisor/schema.py`
-- [ ] Add sidecar store in `src/schwab_client/_advisor/store.py`
+- [x] Add `docs/advisor-sidecar.md`
+- [x] Add `schwab-advisor` CLI entrypoint in `pyproject.toml`
+- [x] Add `src/schwab_client/advisor_cli.py`
+- [x] Add `SCHWAB_ADVISOR_DB_PATH` resolution
+- [x] Add sidecar DB schema in `src/schwab_client/_advisor/schema.py`
+- [x] Add sidecar store in `src/schwab_client/_advisor/store.py`
+- [x] Add `src/core/advisor_models.py`
+- [x] Add `src/core/advisor_prompts.py`
+- [x] Add `src/core/advisor_sidecar.py`
+- [x] Implement read-only bridge from snapshot/history/context/policy
+- [x] Implement recommendation generation + persistence
+- [x] Add `schwab-advisor recommend`
+- [x] Add `schwab-advisor feedback RUN_ID`
+- [x] Add `src/core/advisor_scoring.py`
+- [x] Implement deterministic before/after health scoring
+- [x] Implement outcome evaluator
+- [x] Add `schwab-advisor evaluate`
+- [x] Add `schwab-advisor status`
+- [x] Add `schwab-advisor review RUN_ID`
+- [x] Add tests for models/store/service/CLI recommend flow
+- [x] Add tests for followed / ignored / insufficient-data paths
+- [x] Add tests for empty and populated status/review states
 
-### Acceptance criteria
+## Current behavior guarantees
 
 - `uv run schwab-advisor --help` works
 - sidecar DB initializes in `./private/advisor/advisor.db`
-- existing `schwab` commands behave exactly as before
-
-## PR 1 — Recommendation capture
-
-- [ ] Add `src/core/advisor_models.py`
-- [ ] Add `src/core/advisor_prompts.py`
-- [ ] Add `src/core/advisor_sidecar.py`
-- [ ] Implement read-only bridge from snapshot/history/context/policy
-- [ ] Implement recommendation generation + persistence
-- [ ] Add `schwab-advisor recommend`
-- [ ] Add tests for models/store/service/CLI recommend flow
-
-### Acceptance criteria
-
-- `uv run schwab-advisor recommend --json` returns a valid recommendation envelope
+- existing `schwab` commands remain unchanged
 - each run stores snapshot provenance and raw model artifacts
 - malformed model JSON is handled safely
-- no existing CLI paths are changed
-
-## PR 2 — Feedback and evaluation
-
-- [ ] Add `schwab-advisor feedback RUN_ID`
-- [ ] Add `src/core/advisor_scoring.py`
-- [ ] Implement deterministic before/after health scoring
-- [ ] Implement outcome evaluator
-- [ ] Add `schwab-advisor evaluate`
-- [ ] Add tests for followed / ignored / insufficient-data paths
-
-### Acceptance criteria
-
 - operator feedback is stored separately from recommendation content
-- evaluations produce deterministic labels
-- recommendations with no valid later snapshot are marked `insufficient_data`
+- evaluations produce deterministic labels and skip misleading cases
 
-## PR 3 — Visibility and learning summaries
+## Remaining roadmap
 
-- [ ] Add `schwab-advisor status`
-- [ ] Add `schwab-advisor review RUN_ID`
-- [ ] Add aggregate queries by action type / regime / VIX band / bucket
-- [ ] Add JSON + text views for recent outcomes and improvement rates
-- [ ] Add tests for empty and populated states
-
-### Acceptance criteria
-
-- user can inspect the full lifecycle of a recommendation episode
-- status command answers whether the loop is healthy and accumulating learnings
-
-## PR 4 — Optional narrative layer
-
-- [ ] Add LLM retrospective prompt consuming stored structured outcomes
-- [ ] Add `schwab-advisor retrospective RUN_ID`
-- [ ] Keep narrative synthesis separate from deterministic scoring
-
-### Acceptance criteria
-
-- narrative output distinguishes facts from interpretation
-- evaluator remains deterministic even if LLM synthesis is unavailable
-
-## PR 5 — Optimization only after data exists
-
-- [ ] Build eval cases from real sidecar recommendation episodes
-- [ ] Create sidecar-specific autoresearch program
-- [ ] Optimize only the sidecar recommendation prompt or scoring config
-
-### Acceptance criteria
-
-- no prompt optimization starts before enough real episodes exist
-- evals are grounded in actual recommendation outcomes, not imagined cases
+- [ ] Add aggregate queries by action type / regime / tag / bucket
+- [ ] Add richer JSON + text views for recent outcomes and improvement rates
+- [ ] Add narrative retrospectives while keeping deterministic scoring separate
+- [ ] Build eval cases from real sidecar episodes
+- [ ] Optimize prompts or scoring only after enough real data exists
 
 ---
 
 # Priorities
 
-## P0
+## Current
 
-1. sidecar scaffold
-2. models
-3. schema/store
-4. `recommend`
+1. keep recommendation provenance anchored to the captured snapshot
+2. keep evaluation deterministic and skip misleading cases
+3. accumulate clean operator feedback and notes
+4. preserve the main `schwab` CLI/history contract
 
-## P1
+## Next
 
-5. feedback
-6. deterministic scoring
-7. `evaluate`
-
-## P2
-
-8. `status`
-9. `review`
-10. aggregate insights
+5. add aggregate insights by action type / regime / tag
+6. add richer outcome views beyond raw run inspection
+7. add narrative retrospectives only after enough real episodes exist
 
 ## Later
 
-11. retrospective narratives
-12. autoresearch
-13. any scan/candidate-generation work
+8. build eval cases from real sidecar episodes
+9. optimize the sidecar prompt/scoring config only with grounded data
+10. consider broader candidate-generation work only after the loop proves useful
 
 ---
 
@@ -610,17 +549,12 @@ Until then, keep it isolated.
 
 ---
 
-# First concrete build order
+# Remaining build order
 
-If implementing now, start in this order:
+From the current implementation, the next useful sequence is:
 
-1. Add sidecar CLI entrypoint
-2. Add sidecar DB schema + store
-3. Add sidecar models
-4. Add structured prompt and recommendation generation
-5. Add `schwab-advisor recommend`
-6. Add feedback
-7. Add deterministic scoring
-8. Add `schwab-advisor evaluate`
-9. Add `status` and `review`
-10. Add retrospectives and autoresearch later
+1. Add aggregate insight queries and summary views
+2. Add richer outcome metrics beyond policy-health deltas
+3. Add narrative retrospectives that clearly separate facts from interpretation
+4. Build eval cases from real sidecar episodes
+5. Optimize prompts or scoring only after enough grounded data exists

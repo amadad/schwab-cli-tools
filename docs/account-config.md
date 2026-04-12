@@ -10,12 +10,17 @@ cp config/accounts.template.json config/accounts.json
 
 Then edit `config/accounts.json` with your real account numbers and local metadata.
 
+Keep portfolio policy thresholds, pacing rules, and household-specific heuristics in
+`private/policy.json` (or another file pointed to by `SCHWAB_POLICY_PATH`), not in
+`accounts.json`.
+
 ## File layout
 
 ```text
 config/
 ├── accounts.schema.json    # JSON schema for the config file
 ├── accounts.template.json  # tracked template
+├── policy.template.json    # public-safe policy/profile template
 ├── accounts.json           # local config (gitignored)
 └── secure_account_config.py
 ```
@@ -79,6 +84,20 @@ Project-specific, but commonly:
 - `business`
 - `personal`
 
+## Related policy profile
+
+Use the tracked template as the starting point for local cash targets,
+distribution pacing, and calendar actions:
+
+```bash
+mkdir -p private
+cp config/policy.template.json private/policy.json
+```
+
+`accounts.json` remains the source of account numbers, labels, and metadata.
+The policy file holds portfolio rules and can be relocated with
+`SCHWAB_POLICY_PATH`.
+
 ## Security
 
 `config/accounts.json` is gitignored and must never be committed.
@@ -109,3 +128,4 @@ This metadata is used by:
 - trade account resolution
 - snapshot account masking
 - history/account enrichment
+- context/policy enrichment via stable account aliases

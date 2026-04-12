@@ -611,6 +611,7 @@ class TestCLIRoutingNewCommands:
             include_lynch=True,
             prompt=False,
             template=None,
+            output_path=None,
         )
 
     @patch("src.schwab_client.cli.cmd_lynch")
@@ -675,4 +676,5 @@ class TestCLIRoutingNewCommands:
             include_lynch=True,
             prompt=False,
             template=None,
+            output_path=None,
         )

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import httpx
 
 from src.core.errors import PortfolioError
@@ -16,6 +19,13 @@ from ..output import (
 )
 
 
+def _write_json_artifact(output_path: str, payload: dict) -> Path:
+    path = Path(output_path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, default=str))
+    return path
+
+
 def cmd_history(
     *,
     output_mode: str = "text",
@@ -24,6 +34,8 @@ def cmd_history(
     since: str | None = None,
     symbol: str | None = None,
     account: str | None = None,
+    snapshot_id: int | None = None,
+    output_path: str | None = None,
     backfill_paths: list[str] | None = None,
 ) -> None:
     """Query or backfill the snapshot history database."""
@@ -32,6 +44,10 @@ def cmd_history(
         store = HistoryStore()
 
         if backfill_paths is not None:
+            if snapshot_id is not None:
+                raise PortfolioError("--snapshot-id cannot be combined with --import")
+            if output_path is not None:
+                raise PortfolioError("--output is only supported with --snapshot-id")
             result = store.import_json_paths(backfill_paths)
             if output_mode == "json":
                 print_json_response(command, data=result)
@@ -46,6 +62,49 @@ def cmd_history(
                     print(f"    - {failure['path']}: {failure['message']}")
             print()
             return
+
+        if snapshot_id is not None:
+            if dataset != "runs" or since is not None or symbol is not None or account is not None:
+                raise PortfolioError(
+                    "--snapshot-id is an exact-read path; omit dataset/since/symbol/account filters"
+                )
+            payload = store.get_snapshot_payload(snapshot_id)
+            if payload is None:
+                raise PortfolioError(f"Snapshot {snapshot_id} not found")
+            if output_path is not None:
+                written_path = _write_json_artifact(output_path, payload)
+                if output_mode == "json":
+                    print_json_response(
+                        command,
+                        data={
+                            "db_path": str(store.path),
+                            "snapshot_id": snapshot_id,
+                            "output_path": str(written_path),
+                        },
+                    )
+                else:
+                    print(format_header("SNAPSHOT EXPORTED"))
+                    print(f"  DB Path:     {store.path}")
+                    print(f"  Snapshot ID: {snapshot_id}")
+                    print(f"  Output:      {written_path}")
+                    print()
+                return
+
+            if output_mode == "json":
+                print_json_response(
+                    command,
+                    data={
+                        "db_path": str(store.path),
+                        "snapshot_id": snapshot_id,
+                        "snapshot": payload,
+                    },
+                )
+            else:
+                print(json.dumps(payload, indent=2, default=str))
+            return
+
+        if output_path is not None:
+            raise PortfolioError("--output is only supported with --snapshot-id")
 
         if dataset == "runs":
             rows = store.list_runs(limit=limit, since=since)

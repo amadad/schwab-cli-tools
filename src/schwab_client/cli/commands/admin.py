@@ -2,8 +2,8 @@
 Admin commands: auth, doctor, accounts.
 """
 
+import argparse
 import os
-from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -99,7 +99,7 @@ def cmd_auth_login(
                 print("Re-authenticating (forced).")
 
         if rail == "market":
-            args = SimpleNamespace(
+            args = argparse.Namespace(
                 force=force,
                 manual=manual,
                 interactive=interactive,

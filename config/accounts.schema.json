@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://schwab-cli-tools/accounts.schema.json",
+  "$id": "https://cli-schwab/accounts.schema.json",
   "title": "Schwab CLI Account Configuration",
   "description": "Schema for config/accounts.json - defines account aliases and metadata",
   "type": "object",

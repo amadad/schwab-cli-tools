@@ -21,7 +21,7 @@ class TestPathResolution:
 
         path = resolve_data_dir()
 
-        assert path.name == ".schwab-cli-tools"
+        assert path.name == ".cli-schwab"
         assert "Madad" not in str(path)
 
 
@@ -159,6 +159,55 @@ class TestTokenManager:
 
 class TestTokenExpiration:
     """Tests for token expiration warnings."""
+
+    def test_access_only_token_uses_access_expiry_window(self, tmp_path):
+        """Tokens without refresh tokens should expire at access-token expiry."""
+        from datetime import datetime, timedelta
+
+        token_path = tmp_path / "access_only_token.json"
+        created = datetime.now() - timedelta(minutes=5)
+        access_expires = datetime.now() + timedelta(minutes=25)
+        token_data = {
+            "creation_timestamp": created.isoformat(),
+            "token": {
+                "access_token": "test",
+                "expires_at": access_expires.timestamp(),
+            },
+        }
+        token_path.write_text(json.dumps(token_data))
+
+        manager = TokenManager(token_path=token_path)
+        info = manager.get_token_info()
+
+        assert info["exists"] is True
+        assert info["valid"] is True
+        assert info["expires_in_hours"] < 1
+        assert info["expires_in_days"] == 0
+
+    def test_refreshable_token_uses_refresh_expiry_window(self, tmp_path):
+        """Tokens with refresh tokens should still use the 7-day refresh window."""
+        from datetime import datetime, timedelta
+
+        token_path = tmp_path / "refreshable_token.json"
+        created = datetime.now() - timedelta(minutes=5)
+        access_expires = datetime.now() + timedelta(minutes=25)
+        token_data = {
+            "creation_timestamp": created.isoformat(),
+            "token": {
+                "access_token": "test",
+                "refresh_token": "refresh",
+                "expires_at": access_expires.timestamp(),
+            },
+        }
+        token_path.write_text(json.dumps(token_data))
+
+        manager = TokenManager(token_path=token_path)
+        info = manager.get_token_info()
+
+        assert info["exists"] is True
+        assert info["valid"] is True
+        assert info["expires_in_hours"] > 24 * 6
+        assert info["expires_in_days"] >= 6
 
     def test_token_info_includes_hours_remaining(self, tmp_path):
         """Test token info includes hours remaining."""

@@ -4,7 +4,7 @@ Source: review against OpenAI's agent-friendly CLI guide:
 https://developers.openai.com/codex/use-cases/agent-friendly-clis
 
 ## Goal
-Make `schwab-cli-tools` fully agent-friendly for installed, repeatable, safe CLI use from any folder.
+Make `cli-schwab` fully agent-friendly for installed, repeatable, safe CLI use from any folder.
 
 ## P0
 

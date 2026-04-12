@@ -1,6 +1,6 @@
 # Architecture
 
-High-level module boundaries for `schwab-cli-tools`.
+High-level module boundaries for `cli-schwab`.
 
 ## Guiding principle
 
@@ -18,11 +18,12 @@ Put here:
 - policy / scoring heuristics
 - policy profile loading from public templates or ignored local files
 - context assembly for agent-facing analysis
+- advisor-sidecar prompt/model/scoring helpers
 
 Prefer to keep most modules here free of side effects.
-`context.py` is the main exception today: it orchestrates wrapper calls,
-optional market inputs, and config-backed account metadata into one
-agent-friendly analysis object.
+`context.py` is the main exception today. The experimental
+`advisor_sidecar.py` is the other notable orchestration boundary: it bridges
+snapshot/context capture, model execution, and sidecar persistence.
 
 Avoid putting here:
 - CLI printing
@@ -39,6 +40,22 @@ Responsibilities:
 - format text output
 - emit JSON envelopes
 - map errors to CLI exit behavior
+
+### `src/schwab_client/advisor_cli.py`
+Separate opt-in CLI entrypoint for the recommendation sidecar.
+
+Responsibilities:
+- parse `schwab-advisor` subcommands
+- keep recommendation-journal workflows out of the main `schwab` parser
+- emit the same agent-friendly JSON envelope style as the main CLI
+
+### `src/schwab_client/_advisor/`
+Internal advisor sidecar store.
+
+Responsibilities:
+- sidecar SQLite schema
+- schema migrations for experimental recommendation data
+- persistence/query implementation for runs, feedback, evaluations, and notes
 
 ### `src/schwab_client/_client/`
 Internal client mixins and shared wrapper helpers.
@@ -92,7 +109,8 @@ export-oriented wrapper that writes the same canonical snapshot JSON to disk.
 - `CLAUDE.md`: runtime/local operator notes
 - `docs/history.md`: canonical history/snapshot reference
 - `docs/account-config.md`: canonical account-config reference
-- `docs/advisor-sidecar.md`: proposed opt-in recommendation-learning sidecar plan
+- `docs/advisor-sidecar.md`: experimental opt-in recommendation-learning sidecar reference
+- `docs/_solutions.md`: append-only solved-problems log
 
 ## Preferred extension points
 
@@ -107,6 +125,12 @@ export-oriented wrapper that writes the same canonical snapshot JSON to disk.
 3. update schema or views in `_history/schema.py`
 4. update persistence in `_history/store.py`
 5. update `docs/history.md`
+
+### Extend the advisor sidecar
+1. update `src/core/advisor_models.py` / `advisor_prompts.py` / `advisor_scoring.py` as needed
+2. keep orchestration in `src/core/advisor_sidecar.py`
+3. update sidecar persistence in `src/schwab_client/_advisor/`
+4. document behavior changes in `docs/advisor-sidecar.md`
 
 ### Add account metadata behavior
 1. update `config/accounts.template.json` if needed

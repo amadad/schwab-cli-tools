@@ -74,7 +74,7 @@ from .commands import (
     cmd_vix,
 )
 
-__version__ = get_version("schwab-cli-tools")
+__version__ = get_version("cli-schwab")
 
 OUTPUT_ENV_VAR = "SCHWAB_OUTPUT"
 
@@ -265,6 +265,10 @@ Examples:
         choices=["brief", "review", "memo"],
         help="Wrap context in a prompt template (brief/review/memo)",
     )
+    context_parser.add_argument(
+        "--output",
+        help="Write the full context payload or rendered prompt/template to a file",
+    )
 
     # Admin commands
     auth_parser = subparsers.add_parser("auth", help="Check authentication or log in", parents=[common_parser])
@@ -314,6 +318,15 @@ Examples:
     )
     history_parser.add_argument("--symbol", help="Filter position history by symbol")
     history_parser.add_argument("--account", help="Filter position history by account label/alias")
+    history_parser.add_argument(
+        "--snapshot-id",
+        type=int,
+        help="Read one exact canonical snapshot payload by snapshot id",
+    )
+    history_parser.add_argument(
+        "--output",
+        help="Write the exact snapshot payload selected by --snapshot-id to a file",
+    )
     history_parser.add_argument(
         "--import",
         dest="import_paths",
@@ -370,7 +383,12 @@ Examples:
     buy_parser.add_argument(
         "--live", action="store_true", help="Enable live trading for this command"
     )
-    buy_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    buy_parser.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Reserved; live trades still require typing CONFIRM",
+    )
 
     sell_parser = subparsers.add_parser("sell", help="Sell shares", parents=[common_parser])
     sell_parser.add_argument(
@@ -392,7 +410,12 @@ Examples:
     sell_parser.add_argument(
         "--all", action="store_true", dest="sell_all", help="Sell entire position"
     )
-    sell_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    sell_parser.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Reserved; live trades still require typing CONFIRM",
+    )
 
     orders_parser = subparsers.add_parser(
         "orders", aliases=["ord"], help="Show orders", parents=[common_parser]
@@ -477,6 +500,7 @@ def main(args: list | None = None) -> None:
             include_lynch=getattr(parsed, "lynch", False),
             prompt=getattr(parsed, "prompt", False),
             template=getattr(parsed, "template", None),
+            output_path=getattr(parsed, "output", None),
         )
     elif parsed.command == "auth":
         auth_action = getattr(parsed, "auth_action", "status")
@@ -508,6 +532,8 @@ def main(args: list | None = None) -> None:
             since=getattr(parsed, "since", None),
             symbol=getattr(parsed, "symbol", None),
             account=getattr(parsed, "account", None),
+            snapshot_id=getattr(parsed, "snapshot_id", None),
+            output_path=getattr(parsed, "output", None),
             backfill_paths=import_paths,
         )
     elif parsed.command == "query":

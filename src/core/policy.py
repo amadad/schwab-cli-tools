@@ -67,6 +67,22 @@ class PolicyAlert:
     current_value: float | None = None
     target_value: float | None = None
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PolicyAlert:
+        return cls(
+            bucket=str(data.get("bucket") or "unknown"),
+            severity=str(data.get("severity") or "info"),
+            category=str(data.get("category") or "unknown"),
+            message=str(data.get("message") or ""),
+            metric=str(data["metric"]) if data.get("metric") is not None else None,
+            current_value=(
+                float(data["current_value"]) if data.get("current_value") is not None else None
+            ),
+            target_value=(
+                float(data["target_value"]) if data.get("target_value") is not None else None
+            ),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
             "bucket": self.bucket,
@@ -95,6 +111,18 @@ class DistributionPacing:
     deadline: date
     on_track: bool
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DistributionPacing:
+        return cls(
+            account=str(data.get("account") or "unknown"),
+            ytd_distributions=float(data.get("ytd_distributions", 0.0) or 0.0),
+            annual_floor=float(data.get("annual_floor", 0.0) or 0.0),
+            pacing_pct=float(data.get("pacing_pct", 0.0) or 0.0),
+            years_remaining=int(data.get("years_remaining", 0) or 0),
+            deadline=date.fromisoformat(str(data.get("deadline"))),
+            on_track=bool(data.get("on_track", False)),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "account": self.account,
@@ -115,6 +143,18 @@ class PolicyDelta:
     distribution_pacing: list[DistributionPacing] = field(default_factory=list)
     calendar_actions: list[str] = field(default_factory=list)
     checked_at: str = ""
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PolicyDelta:
+        return cls(
+            alerts=[PolicyAlert.from_dict(alert) for alert in data.get("alerts", [])],
+            distribution_pacing=[
+                DistributionPacing.from_dict(pacing)
+                for pacing in data.get("distribution_pacing", [])
+            ],
+            calendar_actions=[str(item) for item in data.get("calendar_actions", [])],
+            checked_at=str(data.get("checked_at") or ""),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {

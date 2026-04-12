@@ -408,6 +408,55 @@ class TestContextCommand:
     @patch("src.schwab_client.cli.commands.context_cmd.get_cached_market_client")
     @patch("src.schwab_client.cli.commands.context_cmd.get_client")
     @patch("src.schwab_client.cli.commands.context_cmd.PortfolioContext")
+    def test_context_json_output_writes_file_and_returns_metadata(
+        self,
+        mock_context_cls,
+        mock_get_client,
+        mock_get_market_client,
+        tmp_path,
+    ):
+        """context --json --output should export the full payload and return a compact pointer."""
+        from src.schwab_client.cli.commands.context_cmd import cmd_context
+
+        mock_client = MagicMock()
+        mock_market_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_get_market_client.return_value = mock_market_client
+
+        ctx = MagicMock()
+        ctx.assembled_at = "2026-04-01T12:00:00"
+        ctx.market_available = False
+        ctx.manual_accounts_included = True
+        ctx.history = {"snapshot_id": 50, "db_path": "/tmp/history.db"}
+        ctx.to_dict.return_value = {
+            "assembled_at": ctx.assembled_at,
+            "summary": {"total_value": 100.0},
+            "accounts": [{"account": "Trading (...1234)"}],
+            "market_available": ctx.market_available,
+            "manual_accounts_included": ctx.manual_accounts_included,
+            "history": ctx.history,
+        }
+        mock_context_cls.assemble.return_value = ctx
+
+        output_path = tmp_path / "context.json"
+        output = io.StringIO()
+        with redirect_stdout(output):
+            cmd_context(output_mode="json", output_path=str(output_path))
+
+        payload = json.loads(output.getvalue())
+        assert payload["data"] == {
+            "output_path": str(output_path),
+            "output_type": "json",
+            "assembled_at": "2026-04-01T12:00:00",
+            "market_available": False,
+            "manual_accounts_included": True,
+            "history": {"snapshot_id": 50, "db_path": "/tmp/history.db"},
+        }
+        assert json.loads(output_path.read_text()) == ctx.to_dict.return_value
+
+    @patch("src.schwab_client.cli.commands.context_cmd.get_cached_market_client")
+    @patch("src.schwab_client.cli.commands.context_cmd.get_client")
+    @patch("src.schwab_client.cli.commands.context_cmd.PortfolioContext")
     def test_context_template_forces_lynch(
         self,
         mock_context_cls,
@@ -436,6 +485,62 @@ class TestContextCommand:
             market_client=mock_market_client,
             include_lynch=True,
         )
+
+
+class TestHistoryCommand:
+    """Tests for the history command surface."""
+
+    @patch("src.schwab_client.cli.commands.history.HistoryStore")
+    def test_history_snapshot_id_returns_exact_payload(self, mock_store_cls):
+        from src.schwab_client.cli.commands.history import cmd_history
+
+        store = MagicMock()
+        store.path = "/tmp/history.db"
+        store.get_snapshot_payload.return_value = {
+            "generated_at": "2026-04-01T12:00:00",
+            "portfolio": {"summary": {"total_value": 100.0}},
+        }
+        mock_store_cls.return_value = store
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            cmd_history(output_mode="json", snapshot_id=50)
+
+        payload = json.loads(output.getvalue())
+        assert payload["data"] == {
+            "db_path": "/tmp/history.db",
+            "snapshot_id": 50,
+            "snapshot": {
+                "generated_at": "2026-04-01T12:00:00",
+                "portfolio": {"summary": {"total_value": 100.0}},
+            },
+        }
+        store.get_snapshot_payload.assert_called_once_with(50)
+
+    @patch("src.schwab_client.cli.commands.history.HistoryStore")
+    def test_history_snapshot_id_output_writes_file_and_returns_pointer(self, mock_store_cls, tmp_path):
+        from src.schwab_client.cli.commands.history import cmd_history
+
+        store = MagicMock()
+        store.path = "/tmp/history.db"
+        store.get_snapshot_payload.return_value = {
+            "generated_at": "2026-04-01T12:00:00",
+            "portfolio": {"summary": {"total_value": 100.0}},
+        }
+        mock_store_cls.return_value = store
+
+        output_path = tmp_path / "snapshot-50.json"
+        output = io.StringIO()
+        with redirect_stdout(output):
+            cmd_history(output_mode="json", snapshot_id=50, output_path=str(output_path))
+
+        payload = json.loads(output.getvalue())
+        assert payload["data"] == {
+            "db_path": "/tmp/history.db",
+            "snapshot_id": 50,
+            "output_path": str(output_path),
+        }
+        assert json.loads(output_path.read_text()) == store.get_snapshot_payload.return_value
 
 
 class TestPortfolioCommand:
@@ -618,6 +723,22 @@ class TestCLIArgParsing:
 
         mock_cmd.assert_called_once_with(output_mode="text")
 
+    @patch("src.schwab_client.cli.cmd_context")
+    def test_main_parses_context_output_path(self, mock_cmd):
+        """context --output should pass the export path through."""
+        from src.schwab_client.cli import main
+
+        with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
+            main(["context", "--output", "./context.json", "--no-lynch"])
+
+        mock_cmd.assert_called_once_with(
+            output_mode="text",
+            include_lynch=False,
+            prompt=False,
+            template=None,
+            output_path="./context.json",
+        )
+
     @patch("src.schwab_client.cli.cmd_accounts")
     def test_main_parses_accounts_command(self, mock_cmd):
         """Test main function parses accounts command."""
@@ -685,6 +806,28 @@ class TestCLIArgParsing:
             since=None,
             symbol=None,
             account=None,
+            snapshot_id=None,
+            output_path=None,
+            backfill_paths=None,
+        )
+
+    @patch("src.schwab_client.cli.cmd_history")
+    def test_main_parses_history_snapshot_read(self, mock_cmd):
+        """history --snapshot-id should route to the exact-read path."""
+        from src.schwab_client.cli import main
+
+        with patch.dict("os.environ", {"SCHWAB_OUTPUT": "text"}):
+            main(["history", "--snapshot-id", "42", "--output", "./snapshot.json"])
+
+        mock_cmd.assert_called_once_with(
+            output_mode="text",
+            dataset="runs",
+            limit=20,
+            since=None,
+            symbol=None,
+            account=None,
+            snapshot_id=42,
+            output_path="./snapshot.json",
             backfill_paths=None,
         )
 
@@ -713,5 +856,7 @@ class TestCLIArgParsing:
             since=None,
             symbol=None,
             account=None,
+            snapshot_id=None,
+            output_path=None,
             backfill_paths=[],
         )

@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-schwab-cli-tools: agent-friendly Schwab CLI for portfolio analysis, market insights, and trading. Python 3.13+, managed with `uv`.
+cli-schwab: agent-friendly Schwab CLI for portfolio analysis, market insights, and trading. Python 3.13+, managed with `uv`.
 
 ## Setup
 
@@ -9,6 +9,8 @@ uv sync
 cp .env.example .env
 cp config/accounts.template.json config/accounts.json
 mkdir -p tokens private
+# Optional local policy/profile file
+cp config/policy.template.json private/policy.json
 ```
 
 ## Auth
@@ -35,19 +37,22 @@ Without this, orders are rejected with "No trades are currently allowed".
 
 Read-only access (positions, balances, quotes) works without this step.
 
-Tokens default to `~/.schwab-cli-tools/tokens`. In this repo, keep tokens in
+Tokens default to `~/.cli-schwab/tokens`. In this repo, keep tokens in
 `./tokens` (gitignored) by setting `SCHWAB_CLI_DATA_DIR=.` or explicit
-`SCHWAB_TOKEN_PATH` / `SCHWAB_MARKET_TOKEN_PATH`. Reports default to
-`~/.schwab-cli-tools/reports`; set `SCHWAB_REPORT_DIR=./private/reports` to keep
-them under `private/`. Snapshot history defaults to `./private/history/schwab_history.db`
-when `./private/` exists; override with `SCHWAB_HISTORY_DB_PATH`. Refresh tokens
-expire after 7 days.
+`SCHWAB_TOKEN_PATH` / `SCHWAB_MARKET_TOKEN_PATH`. A sibling SQLite `tokens.db`
+sidecar is created automatically for local locking and cached token metadata;
+`uv run schwab auth --json` and `uv run schwab doctor --json` surface that
+storage state. Reports default to `~/.cli-schwab/reports`; set
+`SCHWAB_REPORT_DIR=./private/reports` to keep them under `private/`. Snapshot
+history defaults to `./private/history/schwab_history.db` when `./private/`
+exists; override with `SCHWAB_HISTORY_DB_PATH`. Refresh tokens expire after 7 days.
 
 ## Local Data Layout
 
 Keep the working tree matching upstream; local artifacts live in gitignored folders:
 - `config/accounts.json` (account aliases + numbers)
 - `tokens/` (auth tokens when repo-local paths are configured)
+- `private/policy.json` (portfolio policy/profile overrides, optional)
 - `private/` (notes, snapshots, reports, history DB, journal, reviews, market_cycle, etc.)
 
 Recommended `.env` overrides for repo-local data:
@@ -57,9 +62,13 @@ SCHWAB_CLI_DATA_DIR=.
 SCHWAB_REPORT_DIR=./private/reports
 SCHWAB_HISTORY_DB_PATH=./private/history/schwab_history.db
 SCHWAB_MANUAL_ACCOUNTS_PATH=./private/notes/manual_accounts.json
+SCHWAB_POLICY_PATH=./private/policy.json
+SCHWAB_ADVISOR_DB_PATH=./private/advisor/advisor.db
 # Optional explicit token paths:
 SCHWAB_TOKEN_PATH=./tokens/schwab_token.json
 SCHWAB_MARKET_TOKEN_PATH=./tokens/schwab_market_token.json
+# Optional model override for schwab-advisor recommend:
+SCHWAB_ADVISOR_MODEL_COMMAND='codex exec -m gpt-5.4 --skip-git-repo-check --cd .'
 ```
 
 ## CLI Contract
@@ -68,10 +77,15 @@ Use `uv run schwab <command>` (or `schwab` if installed). Add `--json` for the
 response envelope. For the full historical snapshot/query contract, use
 `docs/history.md` as the canonical reference.
 
-Experimental recommendation-learning work is planned as a separate, opt-in
-sidecar; see `docs/advisor-sidecar.md`. Do not repurpose the main `schwab`
-CLI or canonical history flow for that experiment until the sidecar model
-proves useful.
+`schwab context --json` is the agent-facing context envelope. It includes
+`market`, `market_available`, `recent_transactions`, `manual_accounts_included`,
+`history`, and `errors`, so partial market-auth failure stays visible instead of
+being silently dropped. When the full context is too large, use
+`schwab context --json --output <path>` to export it and return a compact pointer.
+
+Experimental recommendation-learning work now lives in the separate,
+opt-in `schwab-advisor` CLI; see `docs/advisor-sidecar.md`. Keep the main
+`schwab` CLI and canonical history flow stable while iterating on the sidecar.
 
 ### Commands
 
@@ -87,12 +101,18 @@ proves useful.
 | `market` | `mkt` | Show market signals |
 | `movers [--gainers\|--losers]` | `mov` | Show top gainers/losers |
 | `futures` | `fut` | Show pre-market futures |
+| `hours [--date YYYY-MM-DD]` | | Show market hours |
 | `fundamentals SYMBOL` | `fund` | Show symbol fundamentals |
+| `iv SYMBOL` | | Show implied volatility from the options chain |
 | `dividends [--days\|--upcoming]` | `div` | Show dividends |
+| `regime` | `reg` | Show market regime |
+| `lynch` | `ly` | Run Lynch sell-signal scan |
+| `score SYMBOL` | | Show quality-framework score |
+| `context [--prompt] [-t brief\|review\|memo] [--output PATH]` | `ctx` | Assemble portfolio + market + policy context |
 | `auth` | | Check authentication |
 | `doctor` | `dr` | Run diagnostics |
 | `accounts` | | List configured accounts |
-| `history [--dataset ...]` | `hist` | Query stored snapshot history |
+| `history [--dataset ...] [--snapshot-id SNAPSHOT_ID] [--output PATH]` | `hist` | Query stored snapshot history or read one exact snapshot |
 | `query SQL` | | Run read-only SQL against snapshot history |
 | `report [--output PATH]` | | Export canonical snapshot JSON |
 | `snapshot [--output [PATH]] [--no-market]` | `snap` | Capture canonical snapshot |
@@ -101,6 +121,30 @@ proves useful.
 | `orders [ACCOUNT]` | `ord` | Show open orders |
 
 Default account: set `SCHWAB_DEFAULT_ACCOUNT` to omit `ACCOUNT` for buy/sell/orders.
+
+### Advisor sidecar
+
+Use `uv run schwab-advisor <command>` for the experimental recommendation journal:
+
+```bash
+uv run schwab-advisor status --json
+uv run schwab-advisor recommend --json
+uv run schwab-advisor feedback 12 --status followed --json
+uv run schwab-advisor note 12 "buffer constrained by RMD timing" --json
+uv run schwab-advisor evaluate --json
+uv run schwab-advisor review 12 --json
+```
+
+The sidecar writes only to its own DB (`./private/advisor/advisor.db` by default),
+stores snapshot-backed recommendation provenance, and evaluates against later
+snapshots without modifying the canonical history store.
+
+For large read payloads in the main CLI, prefer:
+
+```bash
+uv run schwab context --json --output ./context.json
+uv run schwab history --snapshot-id 50 --output ./snapshot-50.json --json
+```
 
 ### JSON Envelope
 
@@ -140,7 +184,7 @@ Additional safeguards:
 - Live trades require typing "CONFIRM" (cannot be bypassed).
 - `--non-interactive` fails if a prompt would occur.
 - JSON mode cannot execute live trades (use `--dry-run` only).
-- All trade attempts are logged to `~/.schwab-cli-tools/trade_audit.log`.
+- All trade attempts are logged to `~/.cli-schwab/trade_audit.log`.
 
 For clawdbot/automation: Use `--dry-run` for previews. Never use `--live` or set
 `SCHWAB_ALLOW_LIVE_TRADES` in automated environments unless you have explicit approval.
@@ -155,34 +199,46 @@ For clawdbot/automation: Use `--dry-run` for previews. Never use `--live` or set
 
 ```
 src/schwab_client/
+├── advisor_cli.py          # Optional schwab-advisor entrypoint
 ├── cli/                    # CLI package (modular)
 │   ├── __init__.py         # Entry point, argparse, routing
 │   ├── context.py          # Cached clients, trade logger
 │   ├── output.py           # JSON envelope, formatters
 │   └── commands/           # Command handlers
 │       ├── portfolio.py    # portfolio, positions, balance, allocation
-│       ├── market.py       # vix, indices, sectors, movers, futures
+│       ├── market.py       # vix, indices, sectors, movers, futures, hours, iv
 │       ├── history.py      # history, query
 │       ├── trade.py        # buy, sell, orders (unified execute_trade)
 │       ├── admin.py        # auth, doctor, accounts
+│       ├── context_cmd.py  # context prompt / memo assembly
 │       └── report.py       # report, snapshot
+├── _advisor/               # Advisor sidecar schema + store
 ├── _client/                # Internal client mixins / shared helpers
 ├── _history/               # Internal history schema + normalization + store
-├── auth.py                 # Portfolio API authentication
-├── market_auth.py          # Market API authentication
+├── auth.py                 # Portfolio API auth + managed token storage
+├── market_auth.py          # Market API auth + managed token storage
 ├── history.py              # Public SQLite history API
 ├── snapshot.py             # Canonical snapshot collection
 └── client.py               # Public SchwabClientWrapper surface
 
-src/core/                   # Pure business logic (no I/O)
+src/core/                   # Pure business logic plus analysis helpers
+├── advisor_models.py       # Typed recommendation payloads
+├── advisor_prompts.py      # Structured recommendation prompts
+├── advisor_scoring.py      # Deterministic outcome scoring
+├── advisor_sidecar.py      # Sidecar orchestration
 ├── portfolio_service.py    # Portfolio aggregation
 ├── market_service.py       # Market data processing
 ├── snapshot_service.py     # Manual-account merge + snapshot helpers
+├── context.py              # Portfolio context assembly
+├── policy.py               # Policy evaluation and pacing alerts
+├── polymarket.py           # Macro probability signal fetch/normalization
+├── prompts.py              # Brief/review/memo templates
 └── errors.py               # Custom exceptions
 
 config/
 ├── accounts.schema.json    # JSON schema for accounts.json
 ├── accounts.template.json  # Template (tracked)
+├── policy.template.json    # Public-safe policy/profile template
 ├── accounts.json           # Your config (gitignored)
 └── secure_account_config.py
 ```
@@ -192,12 +248,15 @@ config/
 1. **Client Caching**: `context.py` provides lazy singletons for portfolio and market
    clients. Token I/O happens once per CLI invocation.
 
-2. **Unified Trade Execution**: `trade.py` uses a single `execute_trade()` function
+2. **Managed Token Storage**: `auth.py` and `market_auth.py` keep JSON token files
+   paired with a sibling SQLite `tokens.db` sidecar for locking and cached metadata.
+
+3. **Unified Trade Execution**: `trade.py` uses a single `execute_trade()` function
    for both buy and sell, eliminating duplication.
 
-3. **Command Aliases**: Short aliases (`p`, `dr`, `snap`) defined in `cli/__init__.py`.
+4. **Command Aliases**: Short aliases (`p`, `dr`, `snap`, `ctx`) defined in `cli/__init__.py`.
 
-4. **Centralized Output**: `output.py` handles JSON envelope, formatters, and error
+5. **Centralized Output**: `output.py` handles JSON envelope, formatters, and error
    handling consistently across all commands.
 
 ## Testing
@@ -225,3 +284,5 @@ Mock fixtures in `conftest.py`:
 3. Use `hashValue` from `get_account_numbers()` for API calls.
 4. Use `get_client()` and `get_cached_market_client()` from `context.py` - never
    instantiate clients directly in commands.
+5. Keep household-specific policy aliases and thresholds in `private/policy.json`
+   or `SCHWAB_POLICY_PATH`, not in tracked source files.

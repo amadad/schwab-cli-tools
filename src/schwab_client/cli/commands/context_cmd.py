@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import httpx
 
 from src.core.context import PortfolioContext
@@ -11,12 +14,20 @@ from ..context import get_cached_market_client, get_client
 from ..output import format_header, handle_cli_error, print_json_response
 
 
+def _write_context_artifact(output_path: str, content: str) -> Path:
+    path = Path(output_path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    return path
+
+
 def cmd_context(
     *,
     output_mode: str = "text",
     include_lynch: bool = False,
     prompt: bool = False,
     template: str | None = None,
+    output_path: str | None = None,
 ) -> None:
     """Assemble and display the full portfolio context.
 
@@ -31,10 +42,11 @@ def cmd_context(
         client = get_client()
 
         market_client = None
+        market_error: str | None = None
         try:
             market_client = get_cached_market_client()
-        except Exception:
-            pass
+        except Exception as exc:
+            market_error = f"market_auth: {exc}"
 
         # If a template is specified, enable lynch for review/memo depth
         if template in ("review", "memo") and not include_lynch:
@@ -45,11 +57,10 @@ def cmd_context(
             market_client=market_client,
             include_lynch=include_lynch,
         )
+        if market_error:
+            ctx.errors.append(market_error)
 
-        if output_mode == "json":
-            print_json_response(command, data=ctx.to_dict())
-            return
-
+        rendered_text: str | None = None
         if template:
             from src.core.prompts import TEMPLATES, render_prompt
 
@@ -57,11 +68,45 @@ def cmd_context(
             if not tmpl:
                 print(f"Unknown template: {template}. Available: {', '.join(TEMPLATES)}")
                 return
-            print(render_prompt(tmpl, ctx.to_prompt_block()))
+            rendered_text = render_prompt(tmpl, ctx.to_prompt_block())
+        elif prompt:
+            rendered_text = ctx.to_prompt_block()
+
+        if output_path is not None:
+            if rendered_text is None:
+                content = json.dumps(ctx.to_dict(), indent=2, default=str)
+                output_type = "json"
+            else:
+                content = rendered_text
+                output_type = "text"
+            written_path = _write_context_artifact(output_path, content)
+            payload = {
+                "output_path": str(written_path),
+                "output_type": output_type,
+                "assembled_at": ctx.assembled_at,
+                "market_available": ctx.market_available,
+                "manual_accounts_included": ctx.manual_accounts_included,
+                "history": ctx.history,
+            }
+            if output_mode == "json":
+                print_json_response(command, data=payload)
+            else:
+                print(format_header("CONTEXT EXPORTED"))
+                print(f"  Path:      {written_path}")
+                print(f"  Format:    {output_type}")
+                print(f"  Assembled: {ctx.assembled_at}")
+                if ctx.history:
+                    print(f"  Snapshot:  {ctx.history.get('snapshot_id')}")
+                    print(f"  DB Path:   {ctx.history.get('db_path')}")
+                print()
             return
 
-        if prompt:
-            print(ctx.to_prompt_block())
+        if output_mode == "json":
+            print_json_response(command, data=ctx.to_dict())
+            return
+
+        if rendered_text is not None:
+            print(rendered_text)
             return
 
         # Human-readable text output

@@ -28,6 +28,7 @@ from src.core.models import (
     PortfolioSummary,
     VixSnapshot,
 )
+from src.schwab_client.history import HistoryStore
 
 from .market_service import get_market_regime, get_vix
 from .policy import PolicyDelta, evaluate_policy, load_policy_config
@@ -45,6 +46,18 @@ class TransactionRecord:
     amount: float = 0.0
     symbol: str | None = None
     quantity: float | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TransactionRecord:
+        return cls(
+            date=str(data.get("date") or ""),
+            account=str(data.get("account") or ""),
+            type=str(data.get("type") or ""),
+            description=str(data.get("description") or ""),
+            amount=float(data.get("amount", 0.0) or 0.0),
+            symbol=str(data["symbol"]) if data.get("symbol") is not None else None,
+            quantity=float(data["quantity"]) if data.get("quantity") is not None else None,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -71,6 +84,20 @@ class RegimeSnapshot:
     rates_rising: bool = False
     signals: dict[str, float] = field(default_factory=dict)
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RegimeSnapshot:
+        return cls(
+            regime=str(data.get("regime") or "unknown"),
+            description=str(data.get("description") or ""),
+            risk_on=bool(data.get("risk_on", False)),
+            rates_rising=bool(data.get("rates_rising", False)),
+            signals={
+                str(key): float(value)
+                for key, value in (data.get("signals") or {}).items()
+                if value is not None
+            },
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "regime": self.regime,
@@ -88,6 +115,14 @@ class LynchResult:
     total_checked: int = 0
     signals_found: int = 0
     flagged: list[dict[str, Any]] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> LynchResult:
+        return cls(
+            total_checked=int(data.get("total_checked", 0) or 0),
+            signals_found=int(data.get("signals_found", 0) or 0),
+            flagged=[dict(item) for item in data.get("flagged", [])],
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -109,6 +144,7 @@ class PortfolioContext:
     vix: VixSnapshot | None = None
     regime: RegimeSnapshot | None = None
     market: MarketSnapshot | None = None
+    market_available: bool = False
 
     # Signals
     polymarket: PolymarketSnapshot | None = None
@@ -123,7 +159,62 @@ class PortfolioContext:
 
     # Meta
     assembled_at: str = ""
+    history: dict[str, Any] | None = None
+    manual_accounts_included: bool = False
     errors: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PortfolioContext:
+        return cls(
+            summary=(
+                PortfolioSummary.from_dict(data["summary"])
+                if isinstance(data.get("summary"), dict)
+                else None
+            ),
+            accounts=[
+                AccountSnapshot.from_dict(account) for account in (data.get("accounts") or [])
+            ],
+            vix=VixSnapshot.from_dict(data["vix"]) if isinstance(data.get("vix"), dict) else None,
+            regime=(
+                RegimeSnapshot.from_dict(data["regime"])
+                if isinstance(data.get("regime"), dict)
+                else None
+            ),
+            market=(
+                MarketSnapshot.from_dict(data["market"])
+                if isinstance(data.get("market"), dict)
+                else None
+            ),
+            market_available=bool(data.get("market_available", False)),
+            polymarket=(
+                PolymarketSnapshot.from_dict(data["polymarket"])
+                if isinstance(data.get("polymarket"), dict)
+                else None
+            ),
+            lynch=(
+                LynchResult.from_dict(data["lynch"])
+                if isinstance(data.get("lynch"), dict)
+                else None
+            ),
+            ytd_distributions={
+                str(key): float(value)
+                for key, value in (data.get("ytd_distributions") or {}).items()
+                if value is not None
+            },
+            recent_transactions=[
+                TransactionRecord.from_dict(item)
+                for item in (data.get("recent_transactions") or [])
+            ],
+            policy_delta=(
+                PolicyDelta.from_dict(data["policy_delta"])
+                if isinstance(data.get("policy_delta"), dict)
+                else None
+            ),
+            assembled_at=str(data.get("assembled_at") or ""),
+            history=dict(data["history"]) if isinstance(data.get("history"), dict) else None,
+            manual_accounts_included=bool(data.get("manual_accounts_included", False)),
+            errors=[str(item) for item in (data.get("errors") or [])],
+        )
 
     @classmethod
     def assemble(
@@ -169,6 +260,9 @@ class PortfolioContext:
         elif distribution_overrides:
             ctx.ytd_distributions = dict(distribution_overrides)
 
+        # --- History provenance ---
+        ctx._assemble_history_metadata()
+
         # --- Policy evaluation ---
         ctx._evaluate_policy()
 
@@ -177,6 +271,7 @@ class PortfolioContext:
     def _assemble_portfolio(self, client: Any) -> None:
         """Fetch positions and account balances."""
         try:
+            from config.secure_account_config import secure_config
             from src.core.portfolio_service import (
                 build_account_snapshots_model,
                 build_portfolio_summary_model,
@@ -191,11 +286,33 @@ class PortfolioContext:
             self.accounts = build_account_snapshots_model(
                 accounts_raw, get_account_display_name, MONEY_MARKET_SYMBOLS
             )
+            for account in self.accounts:
+                if account.account_number:
+                    account.account_number_last4 = str(account.account_number)[-4:]
+                    info = secure_config.get_account_info_by_number(str(account.account_number))
+                    if info and not account.account_alias:
+                        account.account_alias = info.alias
+                    for position in account.positions:
+                        position.account_number_last4 = str(account.account_number)[-4:]
+                        if info and not position.account_alias:
+                            position.account_alias = info.alias
         except Exception as exc:
             self.errors.append(f"portfolio: {exc}")
 
     def _assemble_market(self, market_client: Any) -> None:
         """Fetch VIX, regime, and full market snapshot."""
+        from .market_service import get_market_indices, get_market_signals, get_sector_performance
+        from .models import IndicesSnapshot, MarketSignalsSnapshot, SectorPerformanceSnapshot
+
+        signals = None
+        indices = None
+        sectors = None
+
+        try:
+            signals = MarketSignalsSnapshot.from_dict(get_market_signals(market_client))
+        except Exception as exc:
+            self.errors.append(f"market.signals: {exc}")
+
         try:
             vix_data = get_vix(market_client)
             self.vix = VixSnapshot.from_dict(vix_data)
@@ -213,6 +330,26 @@ class PortfolioContext:
             )
         except Exception as exc:
             self.errors.append(f"regime: {exc}")
+
+        try:
+            indices = IndicesSnapshot.from_dict(get_market_indices(market_client))
+        except Exception as exc:
+            self.errors.append(f"market.indices: {exc}")
+
+        try:
+            sectors = SectorPerformanceSnapshot.from_dict(get_sector_performance(market_client))
+        except Exception as exc:
+            self.errors.append(f"market.sectors: {exc}")
+
+        self.market = MarketSnapshot(
+            signals=signals,
+            vix=self.vix,
+            indices=indices,
+            sectors=sectors,
+        )
+        self.market_available = any(
+            component is not None for component in (signals, self.vix, indices, sectors)
+        )
 
     def _assemble_polymarket(self) -> None:
         """Fetch macro probability signals from Polymarket."""
@@ -336,12 +473,36 @@ class PortfolioContext:
         except Exception as exc:
             self.errors.append(f"transactions: {exc}")
 
+    def _assemble_history_metadata(self) -> None:
+        """Attach latest history DB provenance for downstream tools."""
+        try:
+            store = HistoryStore()
+            rows = store.list_runs(limit=1)
+            latest = rows[0] if rows else None
+            self.history = {
+                "snapshot_id": latest.get("snapshot_id") if latest else None,
+                "db_path": str(store.path),
+            }
+        except Exception as exc:
+            self.errors.append(f"history: {exc}")
+
+    def _policy_account_key(self, account: AccountSnapshot) -> str:
+        if account.account_alias:
+            return account.account_alias
+        if account.account_number:
+            from config.secure_account_config import secure_config
+
+            info = secure_config.get_account_info_by_number(str(account.account_number))
+            if info:
+                return info.alias
+        return account.account
+
     def _evaluate_policy(self) -> None:
         """Run policy engine against current state."""
         try:
             account_balances: dict[str, dict[str, float]] = {}
             for account in self.accounts:
-                account_balances[account.account] = {
+                account_balances[self._policy_account_key(account)] = {
                     "total_value": account.total_value,
                     "cash": account.total_cash,
                 }
@@ -364,10 +525,15 @@ class PortfolioContext:
             "accounts": [a.to_dict() for a in self.accounts],
             "vix": self.vix.to_dict() if self.vix else None,
             "regime": self.regime.to_dict() if self.regime else None,
+            "market": self.market.to_dict() if self.market else None,
+            "market_available": self.market_available,
             "polymarket": self.polymarket.to_dict() if self.polymarket else None,
             "lynch": self.lynch.to_dict() if self.lynch else None,
             "ytd_distributions": self.ytd_distributions,
+            "recent_transactions": [txn.to_dict() for txn in self.recent_transactions],
             "policy_delta": self.policy_delta.to_dict() if self.policy_delta else None,
+            "history": self.history,
+            "manual_accounts_included": self.manual_accounts_included,
             "errors": self.errors if self.errors else None,
         }
 
@@ -406,6 +572,8 @@ class PortfolioContext:
 
         # --- Market context ---
         lines.append("## Market Context")
+        if not self.market_available and not (self.vix or self.regime):
+            lines.append("Market data unavailable.")
         if self.vix:
             lines.append(f"VIX: {self.vix.vix:.1f} ({self.vix.signal}) — {self.vix.interpretation}")
         if self.regime:

@@ -175,6 +175,37 @@ class HistoryStore(SnapshotNormalizer):
         params.append(limit)
         return self._fetch_all(sql, params)
 
+    def get_snapshot_payload(self, snapshot_id: int) -> dict[str, Any] | None:
+        """Return the raw canonical snapshot payload for a snapshot id."""
+        with self._connect(query_only=True) as conn:
+            row = conn.execute(
+                "SELECT raw_json FROM snapshot_runs WHERE id = ?",
+                (snapshot_id,),
+            ).fetchone()
+        if row is None or not row[0]:
+            return None
+        return json.loads(row[0])
+
+    def find_first_run_on_or_after(
+        self,
+        observed_at: str,
+        *,
+        exclude_snapshot_id: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Return the earliest stored snapshot on or after a timestamp."""
+        sql = """
+            SELECT snapshot_id, observed_at
+            FROM portfolio_history
+            WHERE observed_at >= ?
+        """
+        params: list[Any] = [observed_at]
+        if exclude_snapshot_id is not None:
+            sql += " AND snapshot_id != ?"
+            params.append(exclude_snapshot_id)
+        sql += " ORDER BY observed_at ASC, snapshot_id ASC LIMIT 1"
+        rows = self._fetch_all(sql, params)
+        return rows[0] if rows else None
+
     def get_portfolio_history(
         self,
         *,

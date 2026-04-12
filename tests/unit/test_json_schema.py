@@ -164,10 +164,10 @@ class TestDoctorSchema:
         """Test valid doctor data passes validation."""
         schema = load_schema("doctor")
         valid = {
-            "data_dir": "/Users/test/.schwab-cli-tools",
+            "data_dir": "/Users/test/.cli-schwab",
             "portfolio": {
                 "credentials_present": True,
-                "token_path": "/Users/test/.schwab-cli-tools/tokens/token.json",
+                "token_path": "/Users/test/.cli-schwab/tokens/token.json",
                 "token": {
                     "exists": True,
                     "valid": True,
@@ -176,7 +176,7 @@ class TestDoctorSchema:
             },
             "market": {
                 "credentials_present": True,
-                "token_path": "/Users/test/.schwab-cli-tools/tokens/market_token.json",
+                "token_path": "/Users/test/.cli-schwab/tokens/market_token.json",
                 "token": {
                     "exists": True,
                     "valid": True,

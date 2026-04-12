@@ -21,6 +21,7 @@ node_modules/
 private/
 tokens/
 reports/
+data/ml/
 
 # Local agent/editor state
 .claude/

@@ -29,6 +29,18 @@ class PolymarketSignal:
     summary: str | None = None  # for multi-outcome events
     error: str | None = None
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PolymarketSignal:
+        return cls(
+            slug=str(data.get("slug") or ""),
+            title=str(data.get("title") or ""),
+            probability=(
+                float(data["probability"]) if data.get("probability") is not None else None
+            ),
+            summary=str(data["summary"]) if data.get("summary") is not None else None,
+            error=str(data["error"]) if data.get("error") is not None else None,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"slug": self.slug, "title": self.title}
         if self.probability is not None:
@@ -45,6 +57,13 @@ class PolymarketSignal:
 class PolymarketSnapshot:
     signals: list[PolymarketSignal] = field(default_factory=list)
     timestamp: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PolymarketSnapshot:
+        return cls(
+            signals=[PolymarketSignal.from_dict(signal) for signal in data.get("signals", [])],
+            timestamp=str(data["timestamp"]) if data.get("timestamp") is not None else None,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -65,7 +84,7 @@ class PolymarketSnapshot:
         return lines
 
 
-_HEADERS = {"Accept": "application/json", "User-Agent": "schwab-cli-tools/1.0"}
+_HEADERS = {"Accept": "application/json", "User-Agent": "cli-schwab/1.0"}
 
 
 def _fetch_json(url: str) -> Any:
