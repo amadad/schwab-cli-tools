@@ -16,6 +16,7 @@ Implemented today:
 - operator feedback and freeform notes
 - deterministic policy-health evaluation against later snapshots
 - snapshot-backed provenance via `source_snapshot_id`, `source_history_db_path`, and `baseline_state_json`
+- open-issue reuse keyed by `issue_key`, plus `novelty_hash` / `why_now_class` metadata so unchanged recommendations do not keep reopening the same episode
 
 Still intentionally unfinished:
 
@@ -96,6 +97,11 @@ uv run schwab-advisor review 12 --json
 ```
 
 Current commands: `recommend`, `feedback`, `note`, `evaluate`, `status`, and `review`.
+
+The main `schwab brief nightly` flow now calls the sidecar from the same frozen
+snapshot/context payload used by the morning brief, then records the linked
+`advisor_run_id` on the brief run. That keeps the brief and recommendation layers
+aligned on one source snapshot while preserving separate storage.
 
 ## V1 non-goals
 

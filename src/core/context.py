@@ -216,6 +216,137 @@ class PortfolioContext:
             errors=[str(item) for item in (data.get("errors") or [])],
         )
 
+    @staticmethod
+    def _normalize_ytd_distributions_payload(payload: dict[str, Any] | None) -> dict[str, float]:
+        if not isinstance(payload, dict):
+            return {}
+        return {
+            str(key): float(value)
+            for key, value in payload.items()
+            if value is not None
+        }
+
+    @staticmethod
+    def _stringify_snapshot_errors(errors: Any) -> list[str]:
+        result: list[str] = []
+        if not isinstance(errors, list):
+            return result
+        for error in errors:
+            if isinstance(error, dict):
+                component = str(error.get("component") or "unknown")
+                message = str(error.get("message") or "")
+                result.append(f"{component}: {message}" if message else component)
+            else:
+                result.append(str(error))
+        return result
+
+    @staticmethod
+    def _alias_for_snapshot_account(account: dict[str, Any]) -> str | None:
+        from config.secure_account_config import secure_config
+
+        alias = account.get("account_alias")
+        if alias:
+            return str(alias)
+
+        account_number = account.get("account_number")
+        if account_number:
+            info = secure_config.get_account_info_by_number(str(account_number))
+            if info:
+                return info.alias
+
+        last4 = str(account.get("account_number_last4") or account.get("last_four") or "")
+        if last4:
+            for info in secure_config.get_all_accounts().values():
+                if info.account_number.endswith(last4):
+                    return info.alias
+
+        label = account.get("account") or account.get("name")
+        return str(label) if label else None
+
+    @classmethod
+    def from_snapshot_payload(
+        cls,
+        snapshot: dict[str, Any],
+        *,
+        ytd_distributions: dict[str, Any] | None = None,
+        supplemental: dict[str, Any] | None = None,
+    ) -> tuple[PortfolioContext, str | None]:
+        portfolio = snapshot.get("portfolio") or {}
+        summary = portfolio.get("summary") or snapshot.get("summary")
+        if not isinstance(summary, dict):
+            context = cls(assembled_at=str(snapshot.get("generated_at") or datetime.now().isoformat()))
+            context.errors.append("policy: invalid_snapshot_summary")
+            return context, "invalid_snapshot_summary"
+
+        accounts = [
+            dict(account)
+            for account in (portfolio.get("api_accounts") or snapshot.get("api_accounts") or [])
+            if isinstance(account, dict)
+        ]
+        manual_accounts = (
+            (portfolio.get("manual_accounts") or {}).get("accounts")
+            if isinstance(portfolio.get("manual_accounts"), dict)
+            else []
+        ) or []
+        market = snapshot.get("market") if isinstance(snapshot.get("market"), dict) else None
+        supplemental = supplemental or {}
+        normalized_ytd = cls._normalize_ytd_distributions_payload(ytd_distributions)
+
+        account_balances: dict[str, dict[str, float]] = {}
+        for account in accounts:
+            key = cls._alias_for_snapshot_account(account)
+            if not key:
+                continue
+            account_balances[key] = {
+                "total_value": float(account.get("total_value", 0.0) or 0.0),
+                "cash": float(account.get("total_cash", 0.0) or 0.0),
+            }
+
+        missing_reason: str | None = None
+        policy_delta = None
+        policy_config = load_policy_config()
+        tracked_accounts = policy_config.tracked_distribution_accounts() & set(account_balances)
+        missing_distribution_accounts = sorted(
+            account for account in tracked_accounts if account not in normalized_ytd
+        )
+        if missing_distribution_accounts:
+            missing_reason = "missing_distribution_history:" + ",".join(missing_distribution_accounts)
+        else:
+            policy_delta = evaluate_policy(
+                account_balances=account_balances,
+                ytd_distributions=normalized_ytd,
+                total_cash_pct=float(summary.get("cash_percentage", 0.0) or 0.0),
+                policy_config=policy_config,
+            )
+
+        errors = cls._stringify_snapshot_errors(snapshot.get("errors"))
+        errors.extend(str(error) for error in (supplemental.get("errors") or []))
+        if missing_reason:
+            errors.append(f"policy: {missing_reason}")
+
+        context = cls.from_dict(
+            {
+                "assembled_at": str(supplemental.get("assembled_at") or snapshot.get("generated_at") or ""),
+                "summary": dict(summary),
+                "accounts": accounts,
+                "vix": market.get("vix") if market else None,
+                "regime": supplemental.get("regime"),
+                "market": market,
+                "market_available": bool(
+                    isinstance(market, dict) and any(market.get(component) is not None for component in ("signals", "vix", "indices", "sectors"))
+                ),
+                "polymarket": supplemental.get("polymarket"),
+                "lynch": supplemental.get("lynch"),
+                "ytd_distributions": normalized_ytd,
+                "recent_transactions": list(supplemental.get("recent_transactions") or []),
+                "policy_delta": policy_delta.to_dict() if policy_delta else None,
+                "history": dict(snapshot.get("history") or {}),
+                "manual_accounts_included": bool(manual_accounts),
+                "errors": errors or None,
+            }
+        )
+        return context, missing_reason
+
     @classmethod
     def assemble(
         cls,

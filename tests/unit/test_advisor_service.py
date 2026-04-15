@@ -163,6 +163,20 @@ def test_recommend_rejects_malformed_model_payload(tmp_path):
         service.recommend()
 
 
+def test_recommend_reuses_existing_open_issue(tmp_path):
+    store = AdvisorStore(tmp_path / 'advisor.db')
+    service = DummyService(repo_root=Path.cwd(), store=store)
+
+    first = service.recommend()
+    second = service.recommend()
+    status = store.status()
+
+    assert first.run_id == second.run_id
+    assert second.reused_existing_issue is True
+    assert status['run_count'] == 1
+    assert status['open_count'] == 1
+
+
 def test_evaluate_keeps_open_runs_when_horizon_not_reached(tmp_path, monkeypatch):
     history_path = tmp_path / 'history.db'
     monkeypatch.setenv('SCHWAB_HISTORY_DB_PATH', str(history_path))

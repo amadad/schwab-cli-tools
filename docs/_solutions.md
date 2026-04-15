@@ -1,5 +1,17 @@
 # Solutions Log
 
+## 2026-04-15 — Dedicated market OAuth app could fail headless auth even while portfolio auth still worked
+
+- **Symptom:** `schwab auth login --market --manual` could die at the Schwab authorize step with `invalid_client` / `Unauthorized`, while portfolio auth still worked and the market token remained missing.
+- **Fix:** verified the headless/manual flow itself was sound by completing market auth with the working portfolio OAuth app, then updated local `.env` so `SCHWAB_MARKET_APP_KEY`, `SCHWAB_MARKET_CLIENT_SECRET`, and `SCHWAB_MARKET_CALLBACK_URL` mirror `SCHWAB_INTEL_*`. Market auth now succeeds again while still writing to the separate `schwab_market_token.json` token slot.
+- **Follow-up:** if a separate market app is reintroduced later, verify its Schwab-side callback/app registration before switching the local env back.
+
+## 2026-04-15 — Morning brief state could drift across snapshots, files, and legacy sidecar DBs
+
+- **Symptom:** the portfolio brief flow still depended on separate scripts, file/date matching, and `sent.json`, so analysis and delivery could drift from the source snapshot. The sidecar also grew `issue_key`-based dedupe, which exposed a legacy migration edge case: indexing the new field before adding the column would fail on older advisor DBs.
+- **Fix:** moved the brief flow into repo-native commands (`schwab brief nightly/send/status/show`) backed by `brief_runs` / `brief_deliveries` in the canonical history DB, reused one frozen snapshot/context/scorecard set for analysis plus advisor output, and updated `src/schwab_client/_advisor/store.py` to ensure column migrations run before the `issue_key` index is created.
+- **Follow-up:** treat the history DB as the source of truth for briefing state, keep runtime secret loading at CLI entrypoints instead of library imports, and rely on CI (`ruff` + `pytest`) to catch drift before delivery changes ship.
+
 ## 2026-04-12 — Agent-facing read paths were too blob-shaped for large context and snapshot payloads
 
 - **Symptom:** `schwab context --json` could produce a payload that was awkward for agents to consume inline, and `schwab history` had no first-class exact-read/export path once an agent already knew a stable `snapshot_id`.

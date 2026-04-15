@@ -14,6 +14,11 @@ RECOMMENDATION_RUN_COLUMN_MIGRATIONS = {
     "market_available": "INTEGER NOT NULL DEFAULT 0",
     "manual_accounts_included": "INTEGER NOT NULL DEFAULT 0",
     "model_command": "TEXT",
+    "issue_key": "TEXT",
+    "novelty_hash": "TEXT",
+    "prompt_version": "TEXT",
+    "why_now_class": "TEXT",
+    "supersedes_run_id": "INTEGER",
 }
 
 RECOMMENDATION_EVALUATION_COLUMN_MIGRATIONS = {
@@ -50,6 +55,7 @@ class AdvisorStore:
                 "recommendation_evaluations",
                 RECOMMENDATION_EVALUATION_COLUMN_MIGRATIONS,
             )
+            self._ensure_indexes(con)
             con.commit()
         return self.db_path
 
@@ -66,6 +72,11 @@ class AdvisorStore:
         for name, definition in columns.items():
             if name not in existing:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+    def _ensure_indexes(self, con: sqlite3.Connection) -> None:
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_recommendation_runs_issue_key ON recommendation_runs(issue_key)"
+        )
 
     def insert_recommendation_run(self, **kwargs: Any) -> int:
         fields = [
@@ -92,6 +103,11 @@ class AdvisorStore:
             "market_available",
             "manual_accounts_included",
             "model_command",
+            "issue_key",
+            "novelty_hash",
+            "prompt_version",
+            "why_now_class",
+            "supersedes_run_id",
             "status",
         ]
         payload = {k: kwargs.get(k) for k in fields}
@@ -122,6 +138,18 @@ class AdvisorStore:
         with self.connect() as con:
             rows = con.execute("SELECT id FROM recommendation_runs WHERE status='open' ORDER BY created_at ASC, id ASC").fetchall()
         return [{"id": int(r[0])} for r in rows]
+
+    def find_open_run_by_issue_key(self, issue_key: str | None) -> dict[str, Any] | None:
+        if not issue_key:
+            return None
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT id FROM recommendation_runs WHERE status='open' AND issue_key = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+                (issue_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self.get_run(int(row[0]))
 
     def record_feedback(self, run_id: int, *, status: str, notes: str | None = None) -> None:
         with self.connect() as con:

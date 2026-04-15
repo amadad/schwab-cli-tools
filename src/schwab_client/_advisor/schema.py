@@ -45,6 +45,11 @@ SCHEMA_STATEMENTS = [
         market_available INTEGER NOT NULL DEFAULT 0,
         manual_accounts_included INTEGER NOT NULL DEFAULT 0,
         model_command TEXT,
+        issue_key TEXT,
+        novelty_hash TEXT,
+        prompt_version TEXT,
+        why_now_class TEXT,
+        supersedes_run_id INTEGER,
         status TEXT NOT NULL DEFAULT 'open'
     )
     """,

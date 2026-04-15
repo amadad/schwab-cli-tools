@@ -21,6 +21,7 @@ Commands:
     auth         Check authentication
     doctor       Run diagnostics
     accounts     List accounts
+    brief        Run the portfolio brief pipeline
     history      Query stored snapshot history
     query        Run read-only SQL against snapshot history
     report       Export snapshot JSON
@@ -48,6 +49,7 @@ from .commands import (
     cmd_auth,
     cmd_auth_login,
     cmd_balance,
+    cmd_brief,
     cmd_buy,
     cmd_context,
     cmd_dividends,
@@ -97,6 +99,7 @@ COMMAND_ALIASES = {
     "dr": "doctor",
     "hist": "history",
     "snap": "snapshot",
+    "br": "brief",
     "ord": "orders",
 }
 
@@ -135,7 +138,7 @@ Aliases:
   idx=indices, sec=sectors, mkt=market,
   mov=movers, fut=futures, fund=fundamentals, div=dividends,
   ctx=context, ly=lynch, reg=regime,
-  dr=doctor, hist=history, snap=snapshot, ord=orders
+  dr=doctor, hist=history, snap=snapshot, br=brief, ord=orders
 
 Examples:
   schwab portfolio --json
@@ -147,6 +150,8 @@ Examples:
   schwab context --json
   schwab context -t memo
   schwab snapshot --output ./private/reports/latest.json
+  schwab brief nightly --json
+  schwab brief send --json
   schwab buy acct_trading AAPL 10 --dry-run
   schwab dr                    # doctor diagnostics
 """,
@@ -269,6 +274,45 @@ Examples:
         "--output",
         help="Write the full context payload or rendered prompt/template to a file",
     )
+
+    brief_parser = subparsers.add_parser(
+        "brief",
+        aliases=["br"],
+        help="Build, inspect, and send the portfolio brief",
+    )
+    brief_subparsers = brief_parser.add_subparsers(dest="brief_action")
+
+    brief_nightly_parser = brief_subparsers.add_parser(
+        "nightly",
+        help="Run the nightly brief build",
+        parents=[common_parser],
+    )
+    brief_nightly_parser.add_argument("--reuse-snapshot-id", type=int, help="Reuse an existing snapshot id")
+    brief_nightly_parser.add_argument("--for-date", help="Override brief date (YYYY-MM-DD)")
+
+    brief_send_parser = brief_subparsers.add_parser(
+        "send",
+        help="Send the prepared brief",
+        parents=[common_parser],
+    )
+    brief_send_parser.add_argument("--run-id", type=int, help="Send a specific brief run")
+    brief_send_parser.add_argument("--for-date", help="Select the latest brief for this date (YYYY-MM-DD)")
+    brief_send_parser.add_argument("--dry-run", action="store_true", help="Preview without sending")
+    brief_send_parser.add_argument("--force", action="store_true", help="Send even if already sent or stale")
+
+    brief_status_parser = brief_subparsers.add_parser(
+        "status",
+        help="Show recent brief runs",
+        parents=[common_parser],
+    )
+    brief_status_parser.add_argument("--limit", type=int, default=10, help="Rows to return")
+
+    brief_show_parser = brief_subparsers.add_parser(
+        "show",
+        help="Show one brief run",
+        parents=[common_parser],
+    )
+    brief_show_parser.add_argument("run_id", type=int)
 
     # Admin commands
     auth_parser = subparsers.add_parser("auth", help="Check authentication or log in", parents=[common_parser])
@@ -501,6 +545,18 @@ def main(args: list | None = None) -> None:
             prompt=getattr(parsed, "prompt", False),
             template=getattr(parsed, "template", None),
             output_path=getattr(parsed, "output", None),
+        )
+    elif parsed.command == "brief":
+        action = getattr(parsed, "brief_action", None) or "status"
+        cmd_brief(
+            action=action,
+            output_mode=output_mode,
+            reuse_snapshot_id=getattr(parsed, "reuse_snapshot_id", None),
+            brief_for_date=getattr(parsed, "for_date", None),
+            dry_run=getattr(parsed, "dry_run", False),
+            force=getattr(parsed, "force", False),
+            run_id=getattr(parsed, "run_id", None),
+            limit=getattr(parsed, "limit", 10),
         )
     elif parsed.command == "auth":
         auth_action = getattr(parsed, "auth_action", "status")

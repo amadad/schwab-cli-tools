@@ -11,6 +11,7 @@
 - Put advisor-sidecar orchestration in `src/core/advisor_sidecar.py` and typed recommendation helpers in `src/core/advisor_*.py`.
 - Put typed snapshot/account/market models in `src/core/models.py`.
 - Put snapshot merge/normalization helpers in `src/core/snapshot_service.py`.
+- Put portfolio-brief orchestration in `src/core/brief_service.py` with deterministic helpers in `src/core/brief_*.py`.
 - Keep CLI commands in `src/schwab_client/cli/commands/`.
 - Use `context.py` for client access (cached singletons).
 - Use `src/schwab_client/paths.py` for path/env resolution.
@@ -33,6 +34,7 @@ src/schwab_client/cli/
     ├── trade.py
     ├── admin.py
     ├── context_cmd.py
+    ├── brief_cmd.py
     └── report.py
 
 src/schwab_client/
@@ -76,6 +78,7 @@ instead of extending the main `schwab` parser.
 - Live trading is disabled by default. Never use `--live` or `SCHWAB_ALLOW_LIVE_TRADES` in automation.
 - Prefer the root auth flow: `schwab auth`, `schwab auth login --portfolio`, `schwab auth login --market`.
 - For headless/SSH auth, use `schwab auth login --portfolio --manual` or `schwab auth login --market --manual`.
+- If the dedicated market OAuth app fails with `invalid_client` / `Unauthorized`, reuse the working `SCHWAB_INTEL_*` app values for `SCHWAB_MARKET_*` in local `.env`; the market token still lives in the separate market token path.
 - Trading requires **thinkorswim enablement** on schwab.com for each account.
   Without it, orders fail with "No trades are currently allowed".
 
@@ -104,6 +107,8 @@ def test_portfolio(mock_schwab_client):
 - For agent-ready synthesis, prefer `uv run schwab context --json` after snapshot capture.
 - `schwab context --json` is the canonical agent envelope; it includes `market`, `market_available`, `recent_transactions`, `manual_accounts_included`, `history`, and `errors`.
 - When the full context payload is too large for the task, use `uv run schwab context --json --output <path>` and work from the returned file path instead of dumping the whole object inline.
+- For the morning brief pipeline, prefer `uv run schwab brief nightly --json`, `uv run schwab brief send --json --dry-run`, `uv run schwab brief status --json`, and `uv run schwab brief show <run_id> --json`.
+- Treat `brief_runs` / `brief_deliveries` in the canonical history DB as the source of truth for briefing state and delivery, not JSON filenames.
 - For advisor-sidecar inspection, prefer `uv run schwab-advisor status --json` or `uv run schwab-advisor review <run_id> --json`; use `recommend` / `evaluate` only when you intend to mutate the sidecar DB.
 - For historical analysis, prefer `uv run schwab history ... --json` or `uv run schwab query ... --json`.
 - When a task already has a stable snapshot id, prefer `uv run schwab history --snapshot-id <id> --json` or `--output <path>` instead of SQL or broad history listings.

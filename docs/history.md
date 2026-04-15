@@ -61,6 +61,20 @@ uv run schwab history --dataset positions --symbol AAPL
 uv run schwab history --dataset market
 ```
 
+### Portfolio brief workflow
+
+```bash
+uv run schwab brief nightly --json
+uv run schwab brief send --json --dry-run
+uv run schwab brief status --json
+uv run schwab brief show 12 --json
+```
+
+The brief pipeline stores its own run state in the same canonical history DB via
+`brief_runs` and `brief_deliveries`, keyed to `snapshot_runs.id`. That makes the
+briefing flow reproducible from one frozen snapshot/context/scorecard set instead of
+matching separate JSON artifacts by date.
+
 ### Read or export one exact snapshot
 
 ```bash

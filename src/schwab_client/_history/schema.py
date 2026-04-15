@@ -147,6 +147,49 @@ SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(transaction_date DESC)",
     "CREATE INDEX IF NOT EXISTS idx_transactions_distribution ON transactions(is_distribution) WHERE is_distribution = 1",
     """
+    CREATE TABLE IF NOT EXISTS brief_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        snapshot_id INTEGER NOT NULL UNIQUE REFERENCES snapshot_runs(id) ON DELETE CASCADE,
+        snapshot_observed_at TEXT NOT NULL,
+        brief_for_date TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'captured',
+        context_json TEXT,
+        scorecard_json TEXT,
+        analysis_json TEXT,
+        analysis_raw_response TEXT,
+        analysis_model_command TEXT,
+        analysis_prompt_version TEXT,
+        advisor_run_id INTEGER,
+        advisor_issue_key TEXT,
+        briefing_json TEXT,
+        email_subject TEXT,
+        email_html TEXT,
+        email_text TEXT,
+        fallback_mode TEXT,
+        last_error TEXT,
+        sent_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS brief_deliveries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        brief_run_id INTEGER NOT NULL REFERENCES brief_runs(id) ON DELETE CASCADE,
+        channel TEXT NOT NULL,
+        recipient_json TEXT,
+        provider TEXT,
+        provider_message_id TEXT,
+        dry_run INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        error_text TEXT,
+        attempted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_brief_runs_for_date ON brief_runs(brief_for_date DESC, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_brief_runs_status ON brief_runs(status)",
+    "CREATE INDEX IF NOT EXISTS idx_brief_deliveries_run ON brief_deliveries(brief_run_id, attempted_at DESC)",
+    """
     CREATE VIEW IF NOT EXISTS distribution_history AS
     SELECT
         t.id,

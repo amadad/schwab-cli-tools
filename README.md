@@ -89,6 +89,19 @@ by default, with a sibling SQLite `tokens.db` sidecar used for local locking and
 cached token metadata. `schwab auth --json` and `schwab doctor --json` expose that
 storage state for diagnostics. Refresh tokens expire after 7 days.
 
+If a dedicated `SCHWAB_MARKET_*` app returns `invalid_client` / `Unauthorized`, you can
+still keep a separate market token while reusing the working portfolio OAuth app in
+local `.env`:
+
+```bash
+SCHWAB_MARKET_APP_KEY=${SCHWAB_INTEL_APP_KEY}
+SCHWAB_MARKET_CLIENT_SECRET=${SCHWAB_INTEL_CLIENT_SECRET}
+SCHWAB_MARKET_CALLBACK_URL=${SCHWAB_INTEL_CALLBACK_URL}
+```
+
+That shares the Schwab app registration, not the token file: the market rail still writes
+to `SCHWAB_MARKET_TOKEN_PATH` / `schwab_market_token.json`.
+
 ## CLI Commands
 
 All commands support `--json` for machine-readable output.
@@ -184,6 +197,20 @@ schwab report              # Export-oriented wrapper around snapshot
 schwab report -o ./out.json
 schwab report --no-market
 ```
+
+### Portfolio Brief Commands
+
+```bash
+schwab brief nightly --json             # Capture/reuse snapshot, freeze inputs, analyze, attach advisor, render email
+schwab brief send --json                # Send the prepared brief for today
+schwab brief send --json --dry-run      # Validate selection/readiness without sending
+schwab brief status --json              # List recent brief runs
+schwab brief show 12 --json             # Inspect one brief run in full
+```
+
+The brief pipeline is DB-backed. Nightly state lives in canonical SQLite history as
+`brief_runs` / `brief_deliveries`, so morning send and debugging no longer depend on
+matching JSON files or `sent.json`.
 
 ### Advisor Sidecar Commands
 
@@ -302,6 +329,9 @@ export SCHWAB_REPORT_DIR=~/.cli-schwab/reports
 
 # History database (defaults to ./private/history/schwab_history.db when available)
 export SCHWAB_HISTORY_DB_PATH=~/.cli-schwab/history/schwab_history.db
+export RESEND_API_KEY=your-resend-key
+export PORTFOLIO_ANALYSIS_COMMAND='claude -p'
+export SCHWAB_ADVISOR_MODEL_COMMAND='codex exec -m gpt-5.4 --skip-git-repo-check --cd .'
 
 # Optional manual accounts file for holistic household totals
 export SCHWAB_MANUAL_ACCOUNTS_PATH=./private/notes/manual_accounts.json
@@ -399,6 +429,7 @@ changing the main CLI/history contract.
 ```
 src/schwab_client/
 ├── advisor_cli.py          # Optional schwab-advisor entrypoint
+├── runtime_env.py          # Explicit runtime-only secret/env loading
 ├── cli/                    # Modular CLI package
 │   ├── __init__.py         # Entry point, argparse, routing
 │   ├── context.py          # Cached clients, trade logger
@@ -410,6 +441,7 @@ src/schwab_client/
 │       ├── trade.py        # buy, sell, orders
 │       ├── admin.py        # auth, doctor, accounts
 │       ├── context_cmd.py  # context prompt / memo assembly
+│       ├── brief_cmd.py    # brief nightly/send/status/show
 │       └── report.py       # report, snapshot
 ├── _advisor/               # Advisor sidecar schema + persistence
 ├── _client/                # Internal client mixins / shared helpers
@@ -425,6 +457,10 @@ src/core/                   # Business logic and portfolio analysis helpers
 ├── advisor_prompts.py      # Structured recommendation prompts
 ├── advisor_scoring.py      # Deterministic outcome scoring
 ├── advisor_sidecar.py      # Sidecar orchestration
+├── brief_analysis.py       # Brief narrative analysis + deterministic fallback
+├── brief_render.py         # Brief HTML/text rendering + delivery helper
+├── brief_scorecard.py      # Deterministic bucket scorecard
+├── brief_service.py        # End-to-end brief orchestration
 ├── context.py              # Portfolio context assembly
 ├── portfolio_service.py    # Portfolio aggregation
 ├── market_service.py       # Market data processing

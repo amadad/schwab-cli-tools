@@ -26,6 +26,12 @@ The `--manual` flag prints a URL you can open on any browser (even a different m
 then prompts you to paste the callback URL. Use this for headless servers or SSH sessions.
 Both auth commands support `--manual`.
 
+If the dedicated market OAuth app starts failing with `invalid_client` / `Unauthorized`,
+point `SCHWAB_MARKET_APP_KEY`, `SCHWAB_MARKET_CLIENT_SECRET`, and
+`SCHWAB_MARKET_CALLBACK_URL` at the working `SCHWAB_INTEL_*` values in local `.env`.
+That keeps market auth working while still storing the token separately under the market
+slot (`SCHWAB_MARKET_TOKEN_PATH` / `schwab_market_token.json`).
+
 ### thinkorswim Enablement (Required for Trading)
 
 Each account must be **thinkorswim enabled** on schwab.com to place orders via API.
@@ -67,6 +73,10 @@ SCHWAB_ADVISOR_DB_PATH=./private/advisor/advisor.db
 # Optional explicit token paths:
 SCHWAB_TOKEN_PATH=./tokens/schwab_token.json
 SCHWAB_MARKET_TOKEN_PATH=./tokens/schwab_market_token.json
+# If the dedicated market app is broken, local .env can reuse the portfolio app:
+# SCHWAB_MARKET_APP_KEY=${SCHWAB_INTEL_APP_KEY}
+# SCHWAB_MARKET_CLIENT_SECRET=${SCHWAB_INTEL_CLIENT_SECRET}
+# SCHWAB_MARKET_CALLBACK_URL=${SCHWAB_INTEL_CALLBACK_URL}
 # Optional model override for schwab-advisor recommend:
 SCHWAB_ADVISOR_MODEL_COMMAND='codex exec -m gpt-5.4 --skip-git-repo-check --cd .'
 ```
@@ -86,6 +96,10 @@ being silently dropped. When the full context is too large, use
 Experimental recommendation-learning work now lives in the separate,
 opt-in `schwab-advisor` CLI; see `docs/advisor-sidecar.md`. Keep the main
 `schwab` CLI and canonical history flow stable while iterating on the sidecar.
+
+The morning portfolio brief now has a first-class repo-native flow under
+`schwab brief ...`. Nightly build state and delivery history live in the canonical
+history DB as `brief_runs` / `brief_deliveries`.
 
 ### Commands
 
@@ -116,6 +130,7 @@ opt-in `schwab-advisor` CLI; see `docs/advisor-sidecar.md`. Keep the main
 | `query SQL` | | Run read-only SQL against snapshot history |
 | `report [--output PATH]` | | Export canonical snapshot JSON |
 | `snapshot [--output [PATH]] [--no-market]` | `snap` | Capture canonical snapshot |
+| `brief nightly\|send\|status\|show` | `br` | Build, deliver, and inspect the portfolio brief |
 | `buy [ACCOUNT] SYMBOL QTY` | | Buy shares |
 | `sell [ACCOUNT] SYMBOL QTY` | | Sell shares |
 | `orders [ACCOUNT]` | `ord` | Show open orders |
@@ -138,6 +153,19 @@ uv run schwab-advisor review 12 --json
 The sidecar writes only to its own DB (`./private/advisor/advisor.db` by default),
 stores snapshot-backed recommendation provenance, and evaluates against later
 snapshots without modifying the canonical history store.
+
+### Portfolio brief flow
+
+```bash
+uv run schwab brief nightly --json
+uv run schwab brief send --json --dry-run
+uv run schwab brief status --json
+uv run schwab brief show 12 --json
+```
+
+Use `brief nightly` to freeze snapshot/context/scorecard inputs once, attach the
+advisor output, and render the morning email into the history DB. Use `brief send`
+for readiness checks plus delivery. Do not reconstruct brief state from file names.
 
 For large read payloads in the main CLI, prefer:
 
@@ -200,6 +228,7 @@ For clawdbot/automation: Use `--dry-run` for previews. Never use `--live` or set
 ```
 src/schwab_client/
 ├── advisor_cli.py          # Optional schwab-advisor entrypoint
+├── runtime_env.py          # Explicit runtime-only secret/env loading
 ├── cli/                    # CLI package (modular)
 │   ├── __init__.py         # Entry point, argparse, routing
 │   ├── context.py          # Cached clients, trade logger
@@ -211,6 +240,7 @@ src/schwab_client/
 │       ├── trade.py        # buy, sell, orders (unified execute_trade)
 │       ├── admin.py        # auth, doctor, accounts
 │       ├── context_cmd.py  # context prompt / memo assembly
+│       ├── brief_cmd.py    # brief nightly/send/status/show
 │       └── report.py       # report, snapshot
 ├── _advisor/               # Advisor sidecar schema + store
 ├── _client/                # Internal client mixins / shared helpers
@@ -228,6 +258,10 @@ src/core/                   # Pure business logic plus analysis helpers
 ├── advisor_sidecar.py      # Sidecar orchestration
 ├── portfolio_service.py    # Portfolio aggregation
 ├── market_service.py       # Market data processing
+├── brief_analysis.py       # Brief narrative analysis + fallback
+├── brief_render.py         # Brief HTML/text rendering + delivery helper
+├── brief_scorecard.py      # Deterministic bucket scorecard
+├── brief_service.py        # End-to-end brief orchestration
 ├── snapshot_service.py     # Manual-account merge + snapshot helpers
 ├── context.py              # Portfolio context assembly
 ├── policy.py               # Policy evaluation and pacing alerts
