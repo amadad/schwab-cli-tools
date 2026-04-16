@@ -38,11 +38,26 @@ def _snapshot() -> dict:
                     "positions": [],
                 }
             ],
-            "manual_accounts": {"source_path": None, "last_updated": None, "summary": {}, "accounts": []},
+            "manual_accounts": {
+                "source_path": None,
+                "last_updated": None,
+                "summary": {},
+                "accounts": [],
+            },
             "positions": [],
-            "allocation": {"diversification_score": 90.0, "by_asset_type": {}, "concentration_risks": [], "top_holdings_pct": []},
+            "allocation": {
+                "diversification_score": 90.0,
+                "by_asset_type": {},
+                "concentration_risks": [],
+                "top_holdings_pct": [],
+            },
         },
-        "market": {"vix": {"vix": 17.2, "signal": "normal"}, "signals": None, "indices": None, "sectors": None},
+        "market": {
+            "vix": {"vix": 17.2, "signal": "normal"},
+            "signals": None,
+            "indices": None,
+            "sectors": None,
+        },
         "errors": [],
     }
 
@@ -60,7 +75,9 @@ def test_send_records_delivery_and_marks_run_sent(tmp_path: Path, monkeypatch):
         email_html="<p>Hello</p>",
         email_text="Hello",
     )
-    monkeypatch.setattr("src.core.brief_service.send_email", lambda subject, html, text: {"id": "email_123"})
+    monkeypatch.setattr(
+        "src.core.brief_service.send_email", lambda subject, html, text: {"id": "email_123"}
+    )
 
     service = BriefService(history_store=history, repo_root=tmp_path)
     result = service.send(run_id=run_id, force=True)

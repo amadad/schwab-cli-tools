@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+
+from src.core.json_types import JsonObject
 
 
 @dataclass(slots=True)
@@ -20,7 +21,7 @@ class AdvisorRecommendation:
     tags: list[str] | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AdvisorRecommendation:
+    def from_dict(cls, data: JsonObject) -> AdvisorRecommendation:
         thesis = str(data.get("thesis") or data.get("summary") or "").strip()
         rationale = str(data.get("rationale") or "").strip()
         recommendation_type = str(data.get("recommendation_type") or "").strip()
@@ -61,7 +62,7 @@ class AdvisorRecommendation:
             tags=[str(x) for x in (data.get("tags") or [])],
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> JsonObject:
         return {
             "thesis": self.thesis,
             "rationale": self.rationale,

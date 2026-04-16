@@ -92,7 +92,6 @@ class TestTokenManager:
             ).fetchone()
         assert row is None
 
-
     def test_tokens_exist_false_when_missing(self, tmp_path):
         """Test tokens_exist returns False when file missing"""
         manager = TokenManager(token_path=tmp_path / "nonexistent.json")
@@ -364,7 +363,9 @@ class TestGetAuthenticatedClient:
 
     @patch("src.schwab_client.auth.auth.easy_client")
     @patch("src.schwab_client.auth.auth.client_from_access_functions")
-    def test_creates_token_directory(self, mock_client_from_access, mock_easy, monkeypatch, tmp_path):
+    def test_creates_token_directory(
+        self, mock_client_from_access, mock_easy, monkeypatch, tmp_path
+    ):
         """Test creates token directory if needed"""
         monkeypatch.setenv("SCHWAB_INTEL_APP_KEY", "test_key")
         monkeypatch.setenv("SCHWAB_INTEL_CLIENT_SECRET", "test_secret")
@@ -384,7 +385,7 @@ class TestGetAuthenticatedClient:
             )
             return Mock()
 
-        mock_easy.side_effect = write_token
+        mock_easy.configure_mock(side_effect=write_token)
 
         nested_path = tmp_path / "nested" / "dir" / "token.json"
         get_authenticated_client(token_path=nested_path)
@@ -421,7 +422,7 @@ class TestGetAuthenticatedClient:
             )
             return Mock()
 
-        mock_easy.side_effect = write_token
+        mock_easy.configure_mock(side_effect=write_token)
 
         result = get_authenticated_client(token_path=token_path)
 

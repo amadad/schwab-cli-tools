@@ -131,7 +131,6 @@ def cmd_auth_login(
         handle_cli_error(exc, output_mode=output_mode, command=command)
 
 
-
 def cmd_doctor(*, output_mode: str = "text") -> None:
     """Run diagnostics for configuration and auth."""
     command = "doctor"

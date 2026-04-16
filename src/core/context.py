@@ -18,16 +18,15 @@ Usage:
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any
+from typing import Protocol, cast
 
-from src.core.models import (
-    AccountSnapshot,
-    MarketSnapshot,
-    PortfolioSummary,
-    VixSnapshot,
-)
+from src.core.context_models import LynchResult, RegimeSnapshot, TransactionRecord
+from src.core.errors import ConfigError, PortfolioError
+from src.core.json_types import JsonObject, as_json_array, as_json_object
+from src.core.models import AccountSnapshot, MarketSnapshot, PortfolioSummary, VixSnapshot
 from src.schwab_client.history import HistoryStore
 
 from .market_service import get_market_regime, get_vix
@@ -35,101 +34,37 @@ from .policy import PolicyDelta, evaluate_policy, load_policy_config
 from .polymarket import PolymarketSnapshot, fetch_polymarket_signals
 
 
-@dataclass(slots=True)
-class TransactionRecord:
-    """A single transaction from the Schwab API."""
+class PortfolioContextClient(Protocol):
+    def get_all_accounts_full(self) -> list[dict]: ...
 
-    date: str
-    account: str
-    type: str  # JOURNAL, TRADE, DIVIDEND, etc.
-    description: str = ""
-    amount: float = 0.0
-    symbol: str | None = None
-    quantity: float | None = None
+    def get_account_numbers(self) -> list[dict[str, str]]: ...
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TransactionRecord:
-        return cls(
-            date=str(data.get("date") or ""),
-            account=str(data.get("account") or ""),
-            type=str(data.get("type") or ""),
-            description=str(data.get("description") or ""),
-            amount=float(data.get("amount", 0.0) or 0.0),
-            symbol=str(data["symbol"]) if data.get("symbol") is not None else None,
-            quantity=float(data["quantity"]) if data.get("quantity") is not None else None,
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {
-            "date": self.date,
-            "account": self.account,
-            "type": self.type,
-            "description": self.description,
-            "amount": self.amount,
-        }
-        if self.symbol:
-            d["symbol"] = self.symbol
-        if self.quantity is not None:
-            d["quantity"] = self.quantity
-        return d
+    def get_transactions(
+        self,
+        account_hash: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        transaction_type: str = "TRADE",
+    ) -> list[dict]: ...
 
 
-@dataclass(slots=True)
-class RegimeSnapshot:
-    """Market regime data."""
-
-    regime: str = "unknown"
-    description: str = ""
-    risk_on: bool = False
-    rates_rising: bool = False
-    signals: dict[str, float] = field(default_factory=dict)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> RegimeSnapshot:
-        return cls(
-            regime=str(data.get("regime") or "unknown"),
-            description=str(data.get("description") or ""),
-            risk_on=bool(data.get("risk_on", False)),
-            rates_rising=bool(data.get("rates_rising", False)),
-            signals={
-                str(key): float(value)
-                for key, value in (data.get("signals") or {}).items()
-                if value is not None
-            },
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "regime": self.regime,
-            "description": self.description,
-            "risk_on": self.risk_on,
-            "rates_rising": self.rates_rising,
-            "signals": self.signals,
-        }
+class MarketContextClient(Protocol):
+    def get_quote(self, symbol: str) -> object: ...
 
 
-@dataclass(slots=True)
-class LynchResult:
-    """Lynch sell signal analysis result."""
-
-    total_checked: int = 0
-    signals_found: int = 0
-    flagged: list[dict[str, Any]] = field(default_factory=list)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> LynchResult:
-        return cls(
-            total_checked=int(data.get("total_checked", 0) or 0),
-            signals_found=int(data.get("signals_found", 0) or 0),
-            flagged=[dict(item) for item in data.get("flagged", [])],
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "total_checked": self.total_checked,
-            "signals_found": self.signals_found,
-            "flagged": self.flagged,
-        }
+CONTEXT_COMPONENT_ERRORS = (
+    ConfigError,
+    PortfolioError,
+    OSError,
+    ValueError,
+    TypeError,
+    KeyError,
+    AttributeError,
+    ImportError,
+    LookupError,
+    RuntimeError,
+    sqlite3.Error,
+)
 
 
 @dataclass(slots=True)
@@ -159,12 +94,16 @@ class PortfolioContext:
 
     # Meta
     assembled_at: str = ""
-    history: dict[str, Any] | None = None
+    history: JsonObject | None = None
     manual_accounts_included: bool = False
     errors: list[str] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PortfolioContext:
+    def from_dict(cls, data: JsonObject) -> PortfolioContext:
+        accounts_payload = as_json_array(data.get("accounts"))
+        transactions_payload = as_json_array(data.get("recent_transactions"))
+        distributions_payload = as_json_object(data.get("ytd_distributions"))
+        errors_payload = as_json_array(data.get("errors"))
         return cls(
             summary=(
                 PortfolioSummary.from_dict(data["summary"])
@@ -172,7 +111,9 @@ class PortfolioContext:
                 else None
             ),
             accounts=[
-                AccountSnapshot.from_dict(account) for account in (data.get("accounts") or [])
+                AccountSnapshot.from_dict(account)
+                for account in accounts_payload
+                if isinstance(account, dict)
             ],
             vix=VixSnapshot.from_dict(data["vix"]) if isinstance(data.get("vix"), dict) else None,
             regime=(
@@ -198,12 +139,13 @@ class PortfolioContext:
             ),
             ytd_distributions={
                 str(key): float(value)
-                for key, value in (data.get("ytd_distributions") or {}).items()
+                for key, value in distributions_payload.items()
                 if value is not None
             },
             recent_transactions=[
                 TransactionRecord.from_dict(item)
-                for item in (data.get("recent_transactions") or [])
+                for item in transactions_payload
+                if isinstance(item, dict)
             ],
             policy_delta=(
                 PolicyDelta.from_dict(data["policy_delta"])
@@ -211,23 +153,19 @@ class PortfolioContext:
                 else None
             ),
             assembled_at=str(data.get("assembled_at") or ""),
-            history=dict(data["history"]) if isinstance(data.get("history"), dict) else None,
+            history=as_json_object(data.get("history")) or None,
             manual_accounts_included=bool(data.get("manual_accounts_included", False)),
-            errors=[str(item) for item in (data.get("errors") or [])],
+            errors=[str(item) for item in errors_payload],
         )
 
     @staticmethod
-    def _normalize_ytd_distributions_payload(payload: dict[str, Any] | None) -> dict[str, float]:
+    def _normalize_ytd_distributions_payload(payload: JsonObject | None) -> dict[str, float]:
         if not isinstance(payload, dict):
             return {}
-        return {
-            str(key): float(value)
-            for key, value in payload.items()
-            if value is not None
-        }
+        return {str(key): float(value) for key, value in payload.items() if value is not None}
 
     @staticmethod
-    def _stringify_snapshot_errors(errors: Any) -> list[str]:
+    def _stringify_snapshot_errors(errors: object) -> list[str]:
         result: list[str] = []
         if not isinstance(errors, list):
             return result
@@ -241,7 +179,7 @@ class PortfolioContext:
         return result
 
     @staticmethod
-    def _alias_for_snapshot_account(account: dict[str, Any]) -> str | None:
+    def _alias_for_snapshot_account(account: JsonObject) -> str | None:
         from config.secure_account_config import secure_config
 
         alias = account.get("account_alias")
@@ -266,29 +204,32 @@ class PortfolioContext:
     @classmethod
     def from_snapshot_payload(
         cls,
-        snapshot: dict[str, Any],
+        snapshot: JsonObject,
         *,
-        ytd_distributions: dict[str, Any] | None = None,
-        supplemental: dict[str, Any] | None = None,
+        ytd_distributions: JsonObject | None = None,
+        supplemental: JsonObject | None = None,
     ) -> tuple[PortfolioContext, str | None]:
-        portfolio = snapshot.get("portfolio") or {}
-        summary = portfolio.get("summary") or snapshot.get("summary")
-        if not isinstance(summary, dict):
-            context = cls(assembled_at=str(snapshot.get("generated_at") or datetime.now().isoformat()))
+        portfolio = as_json_object(snapshot.get("portfolio"))
+        summary = as_json_object(portfolio.get("summary")) or as_json_object(
+            snapshot.get("summary")
+        )
+        if not summary:
+            context = cls(
+                assembled_at=str(snapshot.get("generated_at") or datetime.now().isoformat())
+            )
             context.errors.append("policy: invalid_snapshot_summary")
             return context, "invalid_snapshot_summary"
 
         accounts = [
             dict(account)
-            for account in (portfolio.get("api_accounts") or snapshot.get("api_accounts") or [])
+            for account in as_json_array(
+                portfolio.get("api_accounts") or snapshot.get("api_accounts")
+            )
             if isinstance(account, dict)
         ]
-        manual_accounts = (
-            (portfolio.get("manual_accounts") or {}).get("accounts")
-            if isinstance(portfolio.get("manual_accounts"), dict)
-            else []
-        ) or []
-        market = snapshot.get("market") if isinstance(snapshot.get("market"), dict) else None
+        manual_accounts_payload = as_json_object(portfolio.get("manual_accounts"))
+        manual_accounts = as_json_array(manual_accounts_payload.get("accounts"))
+        market = as_json_object(snapshot.get("market")) or None
         supplemental = supplemental or {}
         normalized_ytd = cls._normalize_ytd_distributions_payload(ytd_distributions)
 
@@ -310,7 +251,9 @@ class PortfolioContext:
             account for account in tracked_accounts if account not in normalized_ytd
         )
         if missing_distribution_accounts:
-            missing_reason = "missing_distribution_history:" + ",".join(missing_distribution_accounts)
+            missing_reason = "missing_distribution_history:" + ",".join(
+                missing_distribution_accounts
+            )
         else:
             policy_delta = evaluate_policy(
                 account_balances=account_balances,
@@ -320,27 +263,33 @@ class PortfolioContext:
             )
 
         errors = cls._stringify_snapshot_errors(snapshot.get("errors"))
-        errors.extend(str(error) for error in (supplemental.get("errors") or []))
+        errors.extend(str(error) for error in as_json_array(supplemental.get("errors")))
         if missing_reason:
             errors.append(f"policy: {missing_reason}")
 
         context = cls.from_dict(
             {
-                "assembled_at": str(supplemental.get("assembled_at") or snapshot.get("generated_at") or ""),
+                "assembled_at": str(
+                    supplemental.get("assembled_at") or snapshot.get("generated_at") or ""
+                ),
                 "summary": dict(summary),
                 "accounts": accounts,
-                "vix": market.get("vix") if market else None,
+                "vix": market.get("vix") if market is not None else None,
                 "regime": supplemental.get("regime"),
                 "market": market,
                 "market_available": bool(
-                    isinstance(market, dict) and any(market.get(component) is not None for component in ("signals", "vix", "indices", "sectors"))
+                    market is not None
+                    and any(
+                        market.get(component) is not None
+                        for component in ("signals", "vix", "indices", "sectors")
+                    )
                 ),
                 "polymarket": supplemental.get("polymarket"),
                 "lynch": supplemental.get("lynch"),
                 "ytd_distributions": normalized_ytd,
-                "recent_transactions": list(supplemental.get("recent_transactions") or []),
+                "recent_transactions": as_json_array(supplemental.get("recent_transactions")),
                 "policy_delta": policy_delta.to_dict() if policy_delta else None,
-                "history": dict(snapshot.get("history") or {}),
+                "history": as_json_object(snapshot.get("history")),
                 "manual_accounts_included": bool(manual_accounts),
                 "errors": errors or None,
             }
@@ -350,9 +299,9 @@ class PortfolioContext:
     @classmethod
     def assemble(
         cls,
-        client: Any,
+        client: PortfolioContextClient,
         *,
-        market_client: Any | None = None,
+        market_client: MarketContextClient | None = None,
         include_polymarket: bool = True,
         include_lynch: bool = False,
         include_transactions: bool = True,
@@ -383,7 +332,7 @@ class PortfolioContext:
 
         # --- Lynch ---
         if include_lynch and market_client:
-            ctx._assemble_lynch(client, market_client)
+            ctx._assemble_lynch(market_client)
 
         # --- Transactions / distributions ---
         if include_transactions:
@@ -399,7 +348,7 @@ class PortfolioContext:
 
         return ctx
 
-    def _assemble_portfolio(self, client: Any) -> None:
+    def _assemble_portfolio(self, client: PortfolioContextClient) -> None:
         """Fetch positions and account balances."""
         try:
             from config.secure_account_config import secure_config
@@ -427,10 +376,10 @@ class PortfolioContext:
                         position.account_number_last4 = str(account.account_number)[-4:]
                         if info and not position.account_alias:
                             position.account_alias = info.alias
-        except Exception as exc:
+        except CONTEXT_COMPONENT_ERRORS as exc:
             self.errors.append(f"portfolio: {exc}")
 
-    def _assemble_market(self, market_client: Any) -> None:
+    def _assemble_market(self, market_client: object) -> None:
         """Fetch VIX, regime, and full market snapshot."""
         from .market_service import get_market_indices, get_market_signals, get_sector_performance
         from .models import IndicesSnapshot, MarketSignalsSnapshot, SectorPerformanceSnapshot
@@ -441,13 +390,13 @@ class PortfolioContext:
 
         try:
             signals = MarketSignalsSnapshot.from_dict(get_market_signals(market_client))
-        except Exception as exc:
+        except CONTEXT_COMPONENT_ERRORS as exc:
             self.errors.append(f"market.signals: {exc}")
 
         try:
             vix_data = get_vix(market_client)
             self.vix = VixSnapshot.from_dict(vix_data)
-        except Exception as exc:
+        except CONTEXT_COMPONENT_ERRORS as exc:
             self.errors.append(f"vix: {exc}")
 
         try:
@@ -459,17 +408,17 @@ class PortfolioContext:
                 rates_rising=regime_data.get("rates_rising", False),
                 signals=regime_data.get("signals", {}),
             )
-        except Exception as exc:
+        except CONTEXT_COMPONENT_ERRORS as exc:
             self.errors.append(f"regime: {exc}")
 
         try:
             indices = IndicesSnapshot.from_dict(get_market_indices(market_client))
-        except Exception as exc:
+        except CONTEXT_COMPONENT_ERRORS as exc:
             self.errors.append(f"market.indices: {exc}")
 
         try:
             sectors = SectorPerformanceSnapshot.from_dict(get_sector_performance(market_client))
-        except Exception as exc:
+        except CONTEXT_COMPONENT_ERRORS as exc:
             self.errors.append(f"market.sectors: {exc}")
 
         self.market = MarketSnapshot(
@@ -486,13 +435,16 @@ class PortfolioContext:
         """Fetch macro probability signals from Polymarket."""
         try:
             self.polymarket = fetch_polymarket_signals()
-        except Exception as exc:
+        except CONTEXT_COMPONENT_ERRORS as exc:
             self.errors.append(f"polymarket: {exc}")
 
-    def _assemble_lynch(self, client: Any, market_client: Any) -> None:
+    def _assemble_lynch(
+        self,
+        market_client: MarketContextClient,
+    ) -> None:
         """Run Lynch sell signal analysis on current holdings."""
         try:
-            from src.core.lynch_service import analyze_holdings_lynch
+            from src.core.lynch_service import HoldingInput, analyze_holdings_lynch
 
             positions = self.summary.positions if self.summary else []
             equity_symbols = [
@@ -505,15 +457,16 @@ class PortfolioContext:
                 self.lynch = LynchResult(total_checked=0)
                 return
 
-            holdings_data = []
+            holdings_data: list[HoldingInput] = []
             for symbol in equity_symbols[:50]:  # cap to avoid API overload
                 try:
-                    quote_data = market_client.get_quote(symbol)
-                    if hasattr(quote_data, "json"):
-                        quote_data = quote_data.json()
-                    symbol_data = quote_data.get(symbol, {})
-                    fundamentals = symbol_data.get("fundamental", {})
-                    quote = symbol_data.get("quote", {})
+                    quote_payload = market_client.get_quote(symbol)
+                    if hasattr(quote_payload, "json"):
+                        quote_payload = quote_payload.json()
+                    quote_data = as_json_object(quote_payload)
+                    symbol_data = as_json_object(quote_data.get(symbol))
+                    fundamentals = as_json_object(symbol_data.get("fundamental"))
+                    quote = as_json_object(symbol_data.get("quote"))
                     fundamentals.update(
                         {
                             "lastPrice": quote.get("lastPrice"),
@@ -522,22 +475,22 @@ class PortfolioContext:
                         }
                     )
                     holdings_data.append({"symbol": symbol, "fundamentals": fundamentals})
-                except Exception:
+                except CONTEXT_COMPONENT_ERRORS:
                     continue
 
             results = analyze_holdings_lynch(holdings_data)
-            flagged = [r for r in results if r.get("signals")]
+            flagged = [cast(JsonObject, dict(result)) for result in results if result["signals"]]
             self.lynch = LynchResult(
                 total_checked=len(results),
                 signals_found=len(flagged),
                 flagged=flagged,
             )
-        except Exception as exc:
+        except CONTEXT_COMPONENT_ERRORS as exc:
             self.errors.append(f"lynch: {exc}")
 
     def _assemble_transactions(
         self,
-        client: Any,
+        client: PortfolioContextClient,
         *,
         overrides: dict[str, float] | None = None,
     ) -> None:
@@ -556,10 +509,10 @@ class PortfolioContext:
             for account_info in account_numbers:
                 account_number = account_info["accountNumber"]
                 account_hash = account_info["hashValue"]
-                account_info = secure_config.get_account_info_by_number(account_number)
-                if not account_info:
+                resolved_account = secure_config.get_account_info_by_number(account_number)
+                if not resolved_account:
                     continue
-                alias = account_info.alias
+                alias = resolved_account.alias
                 label = alias
 
                 if alias not in tracked_distribution_accounts:
@@ -595,13 +548,13 @@ class PortfolioContext:
 
                             # Distributions show as negative netAmount (cash out)
                             if amount < 0 and tx_type == "JOURNAL":
-                                self.ytd_distributions[label] = (
-                                    self.ytd_distributions.get(label, 0) + abs(amount)
-                                )
-                except Exception as exc:
+                                self.ytd_distributions[label] = self.ytd_distributions.get(
+                                    label, 0
+                                ) + abs(amount)
+                except CONTEXT_COMPONENT_ERRORS as exc:
                     self.errors.append(f"transactions:{label}: {exc}")
 
-        except Exception as exc:
+        except CONTEXT_COMPONENT_ERRORS as exc:
             self.errors.append(f"transactions: {exc}")
 
     def _assemble_history_metadata(self) -> None:
@@ -614,7 +567,7 @@ class PortfolioContext:
                 "snapshot_id": latest.get("snapshot_id") if latest else None,
                 "db_path": str(store.path),
             }
-        except Exception as exc:
+        except (ConfigError, OSError, sqlite3.Error) as exc:
             self.errors.append(f"history: {exc}")
 
     def _policy_account_key(self, account: AccountSnapshot) -> str:
@@ -645,10 +598,10 @@ class PortfolioContext:
                 ytd_distributions=self.ytd_distributions,
                 total_cash_pct=total_cash_pct,
             )
-        except Exception as exc:
+        except CONTEXT_COMPONENT_ERRORS as exc:
             self.errors.append(f"policy: {exc}")
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> JsonObject:
         """Serialize full context for JSON output."""
         return {
             "assembled_at": self.assembled_at,
@@ -680,10 +633,14 @@ class PortfolioContext:
         if self.summary:
             lines.append("## Portfolio Summary")
             lines.append(f"Total Value: ${self.summary.total_value:,.0f}")
-            lines.append(f"Total Cash: ${self.summary.total_cash:,.0f} ({self.summary.cash_percentage:.1f}%)")
+            lines.append(
+                f"Total Cash: ${self.summary.total_cash:,.0f} ({self.summary.cash_percentage:.1f}%)"
+            )
             lines.append(f"Invested: ${self.summary.total_invested:,.0f}")
             lines.append(f"Unrealized P&L: ${self.summary.total_unrealized_pl:,.0f}")
-            lines.append(f"Accounts: {self.summary.account_count} | Positions: {self.summary.position_count}")
+            lines.append(
+                f"Accounts: {self.summary.account_count} | Positions: {self.summary.position_count}"
+            )
             lines.append("")
 
         # --- Account breakdown ---
@@ -733,9 +690,7 @@ class PortfolioContext:
         if self.policy_delta and self.policy_delta.alerts:
             lines.append("## Policy Alerts")
             for alert in self.policy_delta.alerts:
-                icon = {"critical": "!!!", "warning": "!!", "info": "!"}.get(
-                    alert.severity, "!"
-                )
+                icon = {"critical": "!!!", "warning": "!!", "info": "!"}.get(alert.severity, "!")
                 lines.append(f"[{icon}] {alert.bucket}: {alert.message}")
             lines.append("")
 

@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any
 
 from src.core.errors import ConfigError
+from src.core.json_types import JsonValue
 from src.core.models import (
     AccountSnapshot,
     ManualAccount,
@@ -40,7 +40,7 @@ class HistoryStore(SnapshotNormalizer):
             conn = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
         else:
             conn = sqlite3.connect(self.path)
-        conn.row_factory = sqlite3.Row
+        setattr(conn, "row_factory", sqlite3.Row)  # noqa: B010
         conn.execute("PRAGMA foreign_keys = ON")
         if query_only:
             conn.execute("PRAGMA query_only = ON")
@@ -48,11 +48,11 @@ class HistoryStore(SnapshotNormalizer):
 
     def store_snapshot(
         self,
-        snapshot: dict[str, Any] | SnapshotDocument,
+        snapshot: dict[str, JsonValue] | SnapshotDocument,
         *,
         source_command: str,
         source_path: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, JsonValue]:
         """Persist a canonical snapshot document and return storage metadata."""
         canonical = (
             snapshot
@@ -144,7 +144,7 @@ class HistoryStore(SnapshotNormalizer):
             "source_path": source_path,
         }
 
-    def list_runs(self, *, limit: int = 20, since: str | None = None) -> list[dict[str, Any]]:
+    def list_runs(self, *, limit: int = 20, since: str | None = None) -> list[dict[str, JsonValue]]:
         """Return recent snapshot runs with portfolio summary context."""
         sql = """
             SELECT
@@ -167,7 +167,7 @@ class HistoryStore(SnapshotNormalizer):
             FROM portfolio_history AS history
             LEFT JOIN market_history AS market ON market.snapshot_id = history.snapshot_id
         """
-        params: list[Any] = []
+        params: list[JsonValue] = []
         if since:
             sql += " WHERE history.observed_at >= ?"
             params.append(since)
@@ -175,7 +175,7 @@ class HistoryStore(SnapshotNormalizer):
         params.append(limit)
         return self._fetch_all(sql, params)
 
-    def get_snapshot_payload(self, snapshot_id: int) -> dict[str, Any] | None:
+    def get_snapshot_payload(self, snapshot_id: int) -> dict[str, JsonValue] | None:
         """Return the raw canonical snapshot payload for a snapshot id."""
         with self._connect(query_only=True) as conn:
             row = conn.execute(
@@ -191,14 +191,14 @@ class HistoryStore(SnapshotNormalizer):
         observed_at: str,
         *,
         exclude_snapshot_id: int | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> dict[str, JsonValue] | None:
         """Return the earliest stored snapshot on or after a timestamp."""
         sql = """
             SELECT snapshot_id, observed_at
             FROM portfolio_history
             WHERE observed_at >= ?
         """
-        params: list[Any] = [observed_at]
+        params: list[JsonValue] = [observed_at]
         if exclude_snapshot_id is not None:
             sql += " AND snapshot_id != ?"
             params.append(exclude_snapshot_id)
@@ -211,10 +211,10 @@ class HistoryStore(SnapshotNormalizer):
         *,
         limit: int = 20,
         since: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict[str, JsonValue]]:
         """Return portfolio history rows."""
         sql = "SELECT * FROM portfolio_history"
-        params: list[Any] = []
+        params: list[JsonValue] = []
         if since:
             sql += " WHERE observed_at >= ?"
             params.append(since)
@@ -229,11 +229,11 @@ class HistoryStore(SnapshotNormalizer):
         account: str | None = None,
         limit: int = 50,
         since: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict[str, JsonValue]]:
         """Return position history rows."""
         sql = "SELECT * FROM position_history"
         clauses: list[str] = []
-        params: list[Any] = []
+        params: list[JsonValue] = []
 
         if symbol:
             clauses.append("symbol = ?")
@@ -257,10 +257,10 @@ class HistoryStore(SnapshotNormalizer):
         *,
         limit: int = 20,
         since: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict[str, JsonValue]]:
         """Return market context history rows."""
         sql = "SELECT * FROM market_history"
-        params: list[Any] = []
+        params: list[JsonValue] = []
         if since:
             sql += " WHERE observed_at >= ?"
             params.append(since)
@@ -268,104 +268,7 @@ class HistoryStore(SnapshotNormalizer):
         params.append(limit)
         return self._fetch_all(sql, params)
 
-    def store_transactions(
-        self,
-        transactions: list[dict[str, Any]],
-        *,
-        account_key: str,
-    ) -> int:
-        """Store transactions, deduplicating by unique constraint.
-
-        Returns the number of new transactions inserted.
-        """
-        from datetime import datetime
-
-        observed_at = datetime.now().isoformat()
-        inserted = 0
-
-        with self._connect() as conn:
-            for tx in transactions:
-                net_amount = float(tx.get("net_amount", 0) or 0)
-                tx_type = tx.get("type", "UNKNOWN")
-                description = tx.get("description", "")
-                tx_date = tx.get("date", "")
-                is_dist = int(tx.get("is_distribution", False))
-
-                try:
-                    conn.execute(
-                        """
-                        INSERT INTO transactions (
-                            observed_at, account_key, transaction_date,
-                            transaction_type, description, net_amount,
-                            symbol, quantity, is_distribution, raw_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            observed_at,
-                            account_key,
-                            tx_date,
-                            tx_type,
-                            description,
-                            net_amount,
-                            tx.get("symbol"),
-                            tx.get("quantity"),
-                            is_dist,
-                            json.dumps(tx.get("raw")) if tx.get("raw") else None,
-                        ),
-                    )
-                    inserted += 1
-                except sqlite3.IntegrityError:
-                    pass  # duplicate — already stored
-
-            conn.commit()
-        return inserted
-
-    def get_distribution_ytd(self, year: int | None = None) -> list[dict[str, Any]]:
-        """Get YTD distribution totals per account."""
-        year = year or __import__("datetime").date.today().year
-        year_start = f"{year}-01-01"
-        return self._fetch_all(
-            """
-            SELECT
-                a.account_label,
-                a.account_alias,
-                t.account_key,
-                SUM(ABS(t.net_amount)) AS ytd_total,
-                COUNT(*) AS distribution_count,
-                MIN(t.transaction_date) AS first_distribution,
-                MAX(t.transaction_date) AS last_distribution
-            FROM transactions AS t
-            JOIN accounts AS a ON a.account_key = t.account_key
-            WHERE t.is_distribution = 1
-              AND t.transaction_date >= ?
-            GROUP BY t.account_key
-            """,
-            [year_start],
-        )
-
-    def get_distribution_history(
-        self, *, account: str | None = None, limit: int = 50
-    ) -> list[dict[str, Any]]:
-        """Get distribution transaction history."""
-        sql = """
-            SELECT
-                t.transaction_date,
-                a.account_label,
-                t.net_amount,
-                t.description
-            FROM transactions AS t
-            JOIN accounts AS a ON a.account_key = t.account_key
-            WHERE t.is_distribution = 1
-        """
-        params: list[Any] = []
-        if account:
-            sql += " AND (a.account_label = ? OR a.account_alias = ?)"
-            params.extend([account, account])
-        sql += " ORDER BY t.transaction_date DESC LIMIT ?"
-        params.append(limit)
-        return self._fetch_all(sql, params)
-
-    def execute_query(self, sql: str) -> list[dict[str, Any]]:
+    def execute_query(self, sql: str) -> list[dict[str, JsonValue]]:
         """Execute a read-only SQL query against the history database."""
         statement = sql.strip()
         if not statement:
@@ -382,7 +285,7 @@ class HistoryStore(SnapshotNormalizer):
             cursor = conn.execute(statement)
             return [dict(row) for row in cursor.fetchall()]
 
-    def import_json_paths(self, paths: list[str] | None = None) -> dict[str, Any]:
+    def import_json_paths(self, paths: list[str] | None = None) -> dict[str, JsonValue]:
         """Import legacy or canonical JSON snapshots from disk."""
         candidate_paths = self._resolve_import_paths(paths)
         imported = 0
@@ -399,7 +302,13 @@ class HistoryStore(SnapshotNormalizer):
                     source_path=str(file_path.resolve()),
                 )
                 imported += 1
-            except Exception as exc:  # pragma: no cover - defensive wrapper
+            except (
+                ConfigError,
+                OSError,
+                json.JSONDecodeError,
+                sqlite3.Error,
+                ValueError,
+            ) as exc:  # pragma: no cover - import wrapper
                 failures.append({"path": str(file_path), "message": str(exc)})
 
         result = {
@@ -411,12 +320,14 @@ class HistoryStore(SnapshotNormalizer):
             result["failures"] = failures
         return result
 
-    def create_or_update_brief_run(self, **kwargs: Any) -> int:
+    def create_or_update_brief_run(self, **kwargs: JsonValue) -> int:
         snapshot_id = kwargs.get("snapshot_id")
         snapshot_observed_at = kwargs.get("snapshot_observed_at")
         brief_for_date = kwargs.get("brief_for_date")
         if snapshot_id is None or snapshot_observed_at is None or brief_for_date is None:
-            raise ConfigError("brief run requires snapshot_id, snapshot_observed_at, and brief_for_date")
+            raise ConfigError(
+                "brief run requires snapshot_id, snapshot_observed_at, and brief_for_date"
+            )
 
         existing = self.get_brief_run_by_snapshot_id(int(snapshot_id))
         fields = [
@@ -446,7 +357,9 @@ class HistoryStore(SnapshotNormalizer):
         for key in ("context_json", "scorecard_json", "analysis_json", "briefing_json"):
             payload[key] = self._json_dumps(payload.get(key))
         payload.setdefault("status", "captured")
-        assignments = ",\n                        ".join(f"{field} = excluded.{field}" for field in fields)
+        assignments = ",\n                        ".join(
+            f"{field} = excluded.{field}" for field in fields
+        )
         with self._connect() as conn:
             conn.execute(
                 f"""
@@ -477,7 +390,7 @@ class HistoryStore(SnapshotNormalizer):
         brief_run_id: int,
         *,
         channel: str,
-        recipient_json: dict[str, Any] | list[Any] | None,
+        recipient_json: dict[str, JsonValue] | list[JsonValue] | None,
         provider: str | None,
         provider_message_id: str | None,
         dry_run: bool,
@@ -514,14 +427,16 @@ class HistoryStore(SnapshotNormalizer):
                 raise ConfigError("Could not determine brief delivery id")
             return int(cursor.lastrowid)
 
-    def get_brief_run_by_snapshot_id(self, snapshot_id: int) -> dict[str, Any] | None:
+    def get_brief_run_by_snapshot_id(self, snapshot_id: int) -> dict[str, JsonValue] | None:
         with self._connect(query_only=True) as conn:
-            row = conn.execute("SELECT * FROM brief_runs WHERE snapshot_id = ?", (snapshot_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM brief_runs WHERE snapshot_id = ?", (snapshot_id,)
+            ).fetchone()
         if row is None:
             return None
         return self.get_brief_run(int(row["id"]))
 
-    def get_brief_run(self, run_id: int) -> dict[str, Any] | None:
+    def get_brief_run(self, run_id: int) -> dict[str, JsonValue] | None:
         with self._connect(query_only=True) as conn:
             row = conn.execute("SELECT * FROM brief_runs WHERE id = ?", (run_id,)).fetchone()
             if row is None:
@@ -542,7 +457,7 @@ class HistoryStore(SnapshotNormalizer):
         data["deliveries"] = deliveries
         return data
 
-    def find_latest_brief_for_date(self, brief_for_date: str) -> dict[str, Any] | None:
+    def find_latest_brief_for_date(self, brief_for_date: str) -> dict[str, JsonValue] | None:
         with self._connect(query_only=True) as conn:
             row = conn.execute(
                 "SELECT id FROM brief_runs WHERE brief_for_date = ? ORDER BY created_at DESC, id DESC LIMIT 1",
@@ -552,7 +467,7 @@ class HistoryStore(SnapshotNormalizer):
             return None
         return self.get_brief_run(int(row[0]))
 
-    def list_brief_runs(self, *, limit: int = 10) -> list[dict[str, Any]]:
+    def list_brief_runs(self, *, limit: int = 10) -> list[dict[str, JsonValue]]:
         rows = self._fetch_all(
             """
             SELECT
@@ -576,19 +491,21 @@ class HistoryStore(SnapshotNormalizer):
         )
         return rows
 
-    def _json_dumps(self, value: Any) -> str | None:
+    def _json_dumps(self, value: JsonValue) -> str | None:
         if value is None:
             return None
         return json.dumps(value)
 
-    def _json_loads(self, value: Any) -> Any:
+    def _json_loads(self, value: JsonValue) -> JsonValue:
         if value in (None, ""):
             return None
         if isinstance(value, dict | list):
             return value
         return json.loads(value)
 
-    def _fetch_all(self, sql: str, params: list[Any] | tuple[Any, ...]) -> list[dict[str, Any]]:
+    def _fetch_all(
+        self, sql: str, params: list[JsonValue] | tuple[JsonValue, ...]
+    ) -> list[dict[str, JsonValue]]:
         with self._connect(query_only=True) as conn:
             cursor = conn.execute(sql, params)
             return [dict(row) for row in cursor.fetchall()]
@@ -897,7 +814,7 @@ class HistoryStore(SnapshotNormalizer):
         conn: sqlite3.Connection,
         *,
         source: str,
-        account: AccountSnapshot | ManualAccount | dict[str, Any],
+        account: AccountSnapshot | ManualAccount | dict[str, JsonValue],
     ) -> str:
         account_data = self._account_data(account)
         account_key = self._account_key(source=source, account=account_data)
@@ -941,7 +858,7 @@ class HistoryStore(SnapshotNormalizer):
         )
         return account_key
 
-    def _account_key(self, *, source: str, account: dict[str, Any]) -> str:
+    def _account_key(self, *, source: str, account: dict[str, JsonValue]) -> str:
         if source == "manual":
             manual_id = account.get("id") or account.get("name") or account.get("account")
             if not manual_id:
@@ -956,7 +873,7 @@ class HistoryStore(SnapshotNormalizer):
         last_four = account.get("account_number_last4") or "na"
         return f"api:{label}:{last_four}"
 
-    def _account_lookup_key(self, account: AccountSnapshot | dict[str, Any]) -> str:
+    def _account_lookup_key(self, account: AccountSnapshot | dict[str, JsonValue]) -> str:
         account_data = self._account_data(account)
         return "|".join(
             [
@@ -969,8 +886,8 @@ class HistoryStore(SnapshotNormalizer):
         )
 
     def _account_data(
-        self, account: AccountSnapshot | ManualAccount | dict[str, Any]
-    ) -> dict[str, Any]:
+        self, account: AccountSnapshot | ManualAccount | dict[str, JsonValue]
+    ) -> dict[str, JsonValue]:
         if isinstance(account, dict):
             return account
         return account.to_dict()

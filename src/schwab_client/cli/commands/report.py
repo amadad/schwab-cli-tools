@@ -8,7 +8,7 @@ from pathlib import Path
 
 import httpx
 
-from src.core.errors import PortfolioError
+from src.core.errors import ConfigError, PortfolioError
 
 from ... import paths as path_utils
 from ...history import HistoryStore
@@ -30,7 +30,7 @@ def _build_snapshot(*, include_market: bool) -> dict:
     if include_market:
         try:
             market_client = get_cached_market_client()
-        except Exception as exc:
+        except ConfigError as exc:
             market_error = {"component": "market", "message": str(exc)}
             include_market = False
 

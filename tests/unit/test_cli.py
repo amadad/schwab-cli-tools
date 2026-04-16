@@ -343,10 +343,12 @@ def test_cmd_auth_login_portfolio_reauth(mock_manager_cls, mock_authenticate_int
     from src.schwab_client.cli.commands.admin import cmd_auth_login
 
     manager = MagicMock()
-    manager.get_token_info.side_effect = [
-        {"exists": True, "valid": False},
-        {"exists": True, "valid": True, "expires": "2026-01-01T00:00:00", "expires_in_days": 6},
-    ]
+    manager.get_token_info = MagicMock(
+        side_effect=[
+            {"exists": True, "valid": False},
+            {"exists": True, "valid": True, "expires": "2026-01-01T00:00:00", "expires_in_days": 6},
+        ]
+    )
     manager.db_path = "/tmp/tokens.db"
     mock_manager_cls.return_value = manager
 
@@ -518,7 +520,9 @@ class TestHistoryCommand:
         store.get_snapshot_payload.assert_called_once_with(50)
 
     @patch("src.schwab_client.cli.commands.history.HistoryStore")
-    def test_history_snapshot_id_output_writes_file_and_returns_pointer(self, mock_store_cls, tmp_path):
+    def test_history_snapshot_id_output_writes_file_and_returns_pointer(
+        self, mock_store_cls, tmp_path
+    ):
         from src.schwab_client.cli.commands.history import cmd_history
 
         store = MagicMock()

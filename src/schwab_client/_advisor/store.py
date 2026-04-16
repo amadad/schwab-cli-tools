@@ -1,4 +1,4 @@
-"""Persistence layer for the advisor sidecar."""
+"""Persistence layer for the recommendation engine store."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class AdvisorStore:
     def connect(self) -> sqlite3.Connection:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         con = sqlite3.connect(self.db_path)
-        con.row_factory = sqlite3.Row
+        setattr(con, "row_factory", sqlite3.Row)  # noqa: B010
         con.execute("PRAGMA foreign_keys = ON")
         return con
 
@@ -65,10 +65,7 @@ class AdvisorStore:
         table: str,
         columns: dict[str, str],
     ) -> None:
-        existing = {
-            row[1]
-            for row in con.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
         for name, definition in columns.items():
             if name not in existing:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
@@ -136,7 +133,9 @@ class AdvisorStore:
 
     def list_open_runs(self) -> list[dict[str, Any]]:
         with self.connect() as con:
-            rows = con.execute("SELECT id FROM recommendation_runs WHERE status='open' ORDER BY created_at ASC, id ASC").fetchall()
+            rows = con.execute(
+                "SELECT id FROM recommendation_runs WHERE status='open' ORDER BY created_at ASC, id ASC"
+            ).fetchall()
         return [{"id": int(r[0])} for r in rows]
 
     def find_open_run_by_issue_key(self, issue_key: str | None) -> dict[str, Any] | None:
@@ -153,12 +152,18 @@ class AdvisorStore:
 
     def record_feedback(self, run_id: int, *, status: str, notes: str | None = None) -> None:
         with self.connect() as con:
-            con.execute("INSERT INTO recommendation_feedback (run_id, status, notes) VALUES (?, ?, ?)", (run_id, status, notes))
+            con.execute(
+                "INSERT INTO recommendation_feedback (run_id, status, notes) VALUES (?, ?, ?)",
+                (run_id, status, notes),
+            )
             con.commit()
 
     def record_note(self, run_id: int, *, body: str, note_type: str = "lesson") -> None:
         with self.connect() as con:
-            con.execute("INSERT INTO recommendation_notes (run_id, note_type, body) VALUES (?, ?, ?)", (run_id, note_type, body))
+            con.execute(
+                "INSERT INTO recommendation_notes (run_id, note_type, body) VALUES (?, ?, ?)",
+                (run_id, note_type, body),
+            )
             con.commit()
 
     def insert_evaluation(self, run_id: int, **kwargs: Any) -> None:
@@ -193,9 +198,27 @@ class AdvisorStore:
             row = con.execute("SELECT * FROM recommendation_runs WHERE id=?", (run_id,)).fetchone()
             if row is None:
                 return None
-            feedback = [dict(r) for r in con.execute("SELECT * FROM recommendation_feedback WHERE run_id=? ORDER BY recorded_at DESC, id DESC", (run_id,)).fetchall()]
-            evaluations = [dict(r) for r in con.execute("SELECT * FROM recommendation_evaluations WHERE run_id=? ORDER BY evaluated_at DESC, id DESC", (run_id,)).fetchall()]
-            notes = [dict(r) for r in con.execute("SELECT * FROM recommendation_notes WHERE run_id=? ORDER BY created_at DESC, id DESC", (run_id,)).fetchall()]
+            feedback = [
+                dict(r)
+                for r in con.execute(
+                    "SELECT * FROM recommendation_feedback WHERE run_id=? ORDER BY recorded_at DESC, id DESC",
+                    (run_id,),
+                ).fetchall()
+            ]
+            evaluations = [
+                dict(r)
+                for r in con.execute(
+                    "SELECT * FROM recommendation_evaluations WHERE run_id=? ORDER BY evaluated_at DESC, id DESC",
+                    (run_id,),
+                ).fetchall()
+            ]
+            notes = [
+                dict(r)
+                for r in con.execute(
+                    "SELECT * FROM recommendation_notes WHERE run_id=? ORDER BY created_at DESC, id DESC",
+                    (run_id,),
+                ).fetchall()
+            ]
         run = dict(row)
         for field in ["baseline_state_json", "tags_json", "parsed_response_json"]:
             if run.get(field):
@@ -210,9 +233,18 @@ class AdvisorStore:
     def status(self) -> dict[str, Any]:
         with self.connect() as con:
             run_count = con.execute("SELECT COUNT(*) FROM recommendation_runs").fetchone()[0]
-            open_count = con.execute("SELECT COUNT(*) FROM recommendation_runs WHERE status='open'").fetchone()[0]
-            eval_count = con.execute("SELECT COUNT(*) FROM recommendation_evaluations").fetchone()[0]
-            recent = [dict(r) for r in con.execute("SELECT id, created_at, thesis, recommendation_type, target_id, direction, horizon_days, status FROM recommendation_runs ORDER BY created_at DESC, id DESC LIMIT 10").fetchall()]
+            open_count = con.execute(
+                "SELECT COUNT(*) FROM recommendation_runs WHERE status='open'"
+            ).fetchone()[0]
+            eval_count = con.execute("SELECT COUNT(*) FROM recommendation_evaluations").fetchone()[
+                0
+            ]
+            recent = [
+                dict(r)
+                for r in con.execute(
+                    "SELECT id, created_at, thesis, recommendation_type, target_id, direction, horizon_days, status FROM recommendation_runs ORDER BY created_at DESC, id DESC LIMIT 10"
+                ).fetchall()
+            ]
         return {
             "db_path": str(self.db_path),
             "initialized": self.db_path.exists(),

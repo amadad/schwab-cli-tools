@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
+from src.core.json_types import JsonObject
 from src.core.models import ManualAccount, ManualAccountsSummary, PortfolioSummary
 
 
 def summarize_manual_accounts_model(
-    manual_accounts: Sequence[ManualAccount | dict[str, Any]],
+    manual_accounts: Sequence[ManualAccount | JsonObject],
 ) -> ManualAccountsSummary:
     """Summarize manual account values for holistic reporting."""
     accounts = [
@@ -38,19 +38,9 @@ def summarize_manual_accounts_model(
     )
 
 
-def summarize_manual_accounts(manual_accounts: list[dict[str, Any]]) -> dict[str, Any]:
-    """Summarize manual account values for holistic reporting.
-
-    Manual accounts only provide account-level values, not position-level detail.
-    We treat accounts in the ``cash`` category as cash and everything else as
-    invested capital.
-    """
-    return summarize_manual_accounts_model(manual_accounts).to_dict()
-
-
 def merge_portfolio_summary_model(
-    api_summary: PortfolioSummary | dict[str, Any],
-    manual_accounts: Sequence[ManualAccount | dict[str, Any]],
+    api_summary: PortfolioSummary | JsonObject,
+    manual_accounts: Sequence[ManualAccount | JsonObject],
 ) -> PortfolioSummary:
     """Merge API portfolio summary with manual account totals."""
     summary = (
@@ -90,11 +80,3 @@ def merge_portfolio_summary_model(
         position_count=summary.position_count,
         positions=list(summary.positions),
     )
-
-
-def merge_portfolio_summary(
-    api_summary: dict[str, Any],
-    manual_accounts: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Merge API portfolio summary with manual account totals."""
-    return merge_portfolio_summary_model(api_summary, manual_accounts).to_dict()

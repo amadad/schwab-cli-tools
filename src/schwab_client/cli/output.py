@@ -10,12 +10,12 @@ Provides:
 import json
 import sys
 from datetime import datetime
-from typing import Any
 
 import httpx
 
 from config.secure_account_config import secure_config
 from src.core.errors import ConfigError, PortfolioError
+from src.core.json_types import JsonObject, JsonValue
 
 SCHEMA_VERSION = 1
 
@@ -24,9 +24,9 @@ def build_response(
     command: str,
     *,
     success: bool = True,
-    data: dict[str, Any] | None = None,
-    error: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+    data: JsonObject | None = None,
+    error: JsonObject | None = None,
+) -> JsonObject:
     """Build standardized JSON response envelope."""
     return {
         "schema_version": SCHEMA_VERSION,
@@ -38,7 +38,7 @@ def build_response(
     }
 
 
-def scrub_account_identifiers(data: Any) -> Any:
+def scrub_account_identifiers(data: JsonValue) -> JsonValue:
     """Recursively replace account numbers with aliases in output data.
 
     Prevents accidental exposure of account numbers in JSON output
@@ -53,7 +53,7 @@ def scrub_account_identifiers(data: Any) -> Any:
     return _scrub_recursive(data, number_to_alias)
 
 
-def _scrub_recursive(data: Any, number_to_alias: dict[str, str]) -> Any:
+def _scrub_recursive(data: JsonValue, number_to_alias: dict[str, str]) -> JsonValue:
     """Recursively scrub account numbers from data structures."""
     if isinstance(data, str):
         for number, alias in number_to_alias.items():
@@ -71,8 +71,8 @@ def print_json_response(
     command: str,
     *,
     success: bool = True,
-    data: dict[str, Any] | None = None,
-    error: dict[str, Any] | None = None,
+    data: JsonObject | None = None,
+    error: JsonObject | None = None,
 ) -> None:
     """Print JSON response to stdout."""
     response = build_response(command, success=success, data=data, error=error)
@@ -129,7 +129,7 @@ def handle_cli_error(error: Exception, *, output_mode: str, command: str) -> Non
             )
 
         if output_mode == "json":
-            error_data: dict[str, Any] = {"type": "APIError", "message": message}
+            error_data: JsonObject = {"type": "APIError", "message": message}
             if request_id:
                 error_data["request_id"] = request_id
             if status_code:

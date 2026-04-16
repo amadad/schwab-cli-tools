@@ -1,14 +1,25 @@
-"""Advisor CLI entrypoint."""
+"""Recommendation-engine CLI entrypoint (`schwab-advisor`)."""
 
 from __future__ import annotations
 
 import argparse
+import sqlite3
 
 from src.core.advisor_sidecar import AdvisorSidecarService
+from src.core.errors import ConfigError, PortfolioError
 from src.schwab_client._advisor.store import AdvisorStore
 from src.schwab_client.cli.output import handle_cli_error, print_json_response
 
 FEEDBACK_STATUSES = ("followed", "partially_followed", "ignored", "unknown")
+ADVISOR_COMMAND_ERRORS = (
+    ConfigError,
+    PortfolioError,
+    OSError,
+    sqlite3.Error,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -147,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         return 0
-    except Exception as exc:
+    except ADVISOR_COMMAND_ERRORS as exc:
         handle_cli_error(exc, output_mode=output_mode, command=f"advisor-{command}")
         return 1
 

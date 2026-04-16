@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
-
+from src.core.json_types import JsonObject, as_json_array, as_json_object
 from src.core.portfolio_service import (
     analyze_allocation,
     build_account_balances,
@@ -12,12 +11,13 @@ from src.core.portfolio_service import (
 )
 
 from .common import MONEY_MARKET_SYMBOLS, _retry_on_transient_error
+from .protocols import SchwabClientTransport
 
 
 class PortfolioClientMixin:
     """Mixin providing read-oriented Schwab account and quote methods."""
 
-    _client: Any
+    _client: SchwabClientTransport
     _account_hashes: dict[str, str] | None
 
     @_retry_on_transient_error()
@@ -25,11 +25,21 @@ class PortfolioClientMixin:
         """Get account numbers with hash values."""
         response = self._client.get_account_numbers()
         response.raise_for_status()
-        accounts = response.json()
+        payload = as_json_array(response.json())
+        accounts = [account for account in payload if isinstance(account, dict)]
         self._account_hashes = {
-            account["accountNumber"]: account["hashValue"] for account in accounts
+            str(account["accountNumber"]): str(account["hashValue"])
+            for account in accounts
+            if account.get("accountNumber") is not None and account.get("hashValue") is not None
         }
-        return accounts
+        return [
+            {
+                "accountNumber": str(account["accountNumber"]),
+                "hashValue": str(account["hashValue"]),
+            }
+            for account in accounts
+            if account.get("accountNumber") is not None and account.get("hashValue") is not None
+        ]
 
     def get_account_hash(self, account_number: str) -> str | None:
         """Get hash value for an account number."""
@@ -38,7 +48,7 @@ class PortfolioClientMixin:
         return self._account_hashes.get(account_number) if self._account_hashes else None
 
     @_retry_on_transient_error()
-    def get_account(self, account_hash: str, include_positions: bool = True) -> dict[str, Any]:
+    def get_account(self, account_hash: str, include_positions: bool = True) -> JsonObject:
         """Get account details by hash value."""
         if include_positions:
             response = self._client.get_account(
@@ -49,16 +59,17 @@ class PortfolioClientMixin:
             response = self._client.get_account(account_hash)
 
         response.raise_for_status()
-        return response.json()
+        return as_json_object(response.json())
 
     @_retry_on_transient_error()
-    def get_all_accounts_full(self) -> list[dict[str, Any]]:
+    def get_all_accounts_full(self) -> list[JsonObject]:
         """Get all accounts with positions."""
         response = self._client.get_accounts(fields=self._client.Account.Fields.POSITIONS)
         response.raise_for_status()
-        return response.json()
+        payload = as_json_array(response.json())
+        return [account for account in payload if isinstance(account, dict)]
 
-    def get_portfolio_summary(self) -> dict[str, Any]:
+    def get_portfolio_summary(self) -> JsonObject:
         """Get comprehensive portfolio summary with cash/invested breakdown."""
         accounts = self.get_all_accounts_full()
         return build_portfolio_summary(
@@ -67,12 +78,12 @@ class PortfolioClientMixin:
             MONEY_MARKET_SYMBOLS,
         )
 
-    def get_positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
+    def get_positions(self, symbol: str | None = None) -> list[JsonObject]:
         """Get detailed positions across all accounts."""
         accounts = self.get_all_accounts_full()
         return build_positions(accounts, self._get_account_display_name, symbol)
 
-    def get_account_balances(self) -> list[dict[str, Any]]:
+    def get_account_balances(self) -> list[JsonObject]:
         """Get balances for all accounts."""
         accounts = self.get_all_accounts_full()
         return build_account_balances(
@@ -81,44 +92,38 @@ class PortfolioClientMixin:
             MONEY_MARKET_SYMBOLS,
         )
 
-    def analyze_allocation(self) -> dict[str, Any]:
+    def analyze_allocation(self) -> JsonObject:
         """Analyze portfolio allocation and concentration."""
         accounts = self.get_all_accounts_full()
         return analyze_allocation(accounts)
 
     @_retry_on_transient_error()
-    def get_quote(self, symbol: str) -> dict[str, Any]:
+    def get_quote(self, symbol: str) -> JsonObject:
         """Get quote for a single symbol."""
         response = self._client.get_quote(symbol)
         response.raise_for_status()
-        return response.json()
+        return as_json_object(response.json())
 
     @_retry_on_transient_error()
-    def get_quotes(self, symbols: list[str]) -> dict[str, Any]:
+    def get_quotes(self, symbols: list[str]) -> JsonObject:
         """Get quotes for multiple symbols."""
         response = self._client.get_quotes(symbols)
         response.raise_for_status()
-        return response.json()
+        return as_json_object(response.json())
 
     @_retry_on_transient_error()
-    def get_price_history_daily(self, symbol: str) -> dict[str, Any]:
-        """Get daily price history for a symbol."""
-        response = self._client.get_price_history_every_day(symbol)
-        response.raise_for_status()
-        return response.json()
-
-    @_retry_on_transient_error()
-    def get_orders(self, account_hash: str) -> list[dict[str, Any]]:
+    def get_orders(self, account_hash: str) -> list[JsonObject]:
         """Get orders for an account."""
         response = self._client.get_orders_for_account(account_hash)
         response.raise_for_status()
-        return response.json()
+        payload = as_json_array(response.json())
+        return [order for order in payload if isinstance(order, dict)]
 
-    def get_order(self, account_hash: str, order_id: int) -> dict[str, Any] | None:
+    def get_order(self, account_hash: str, order_id: int) -> JsonObject | None:
         """Get a specific order by ID."""
         response = self._client.get_order(order_id, account_hash)
         if response.status_code == 200:
-            return response.json()
+            return as_json_object(response.json())
         return None
 
     @_retry_on_transient_error()
@@ -128,7 +133,7 @@ class PortfolioClientMixin:
         start_date: str | None = None,
         end_date: str | None = None,
         transaction_type: str = "TRADE",
-    ) -> list[dict[str, Any]]:
+    ) -> list[JsonObject]:
         """Get transactions for an account."""
         from datetime import datetime, timedelta
 
@@ -142,7 +147,8 @@ class PortfolioClientMixin:
             transaction_types=self._client.Transactions.TransactionType(transaction_type),
         )
         response.raise_for_status()
-        return response.json()
+        payload = as_json_array(response.json())
+        return [transaction for transaction in payload if isinstance(transaction, dict)]
 
     def _get_account_display_name(self, account_number: str) -> str:
         """Get friendly display name for account."""

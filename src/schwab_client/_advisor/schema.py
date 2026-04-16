@@ -1,4 +1,8 @@
-"""Schema and path helpers for the advisor sidecar store."""
+"""Schema and path helpers for the recommendation store.
+
+The `_advisor/` package name is retained for compatibility while the architecture
+terminology shifts from "advisor sidecar" to "recommendation engine".
+"""
 
 from __future__ import annotations
 

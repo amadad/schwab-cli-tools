@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 
 from src.core.context import PortfolioContext
-from src.core.errors import PortfolioError
+from src.core.errors import ConfigError, PortfolioError
 
 from ..context import get_cached_market_client, get_client
 from ..output import format_header, handle_cli_error, print_json_response
@@ -45,7 +45,7 @@ def cmd_context(
         market_error: str | None = None
         try:
             market_client = get_cached_market_client()
-        except Exception as exc:
+        except ConfigError as exc:
             market_error = f"market_auth: {exc}"
 
         # If a template is specified, enable lynch for review/memo depth
@@ -123,7 +123,9 @@ def _print_text_context(ctx: PortfolioContext) -> None:
 
     if ctx.summary:
         print(f"\n  Total Value:  ${ctx.summary.total_value:,.0f}")
-        print(f"  Total Cash:   ${ctx.summary.total_cash:,.0f} ({ctx.summary.cash_percentage:.1f}%)")
+        print(
+            f"  Total Cash:   ${ctx.summary.total_cash:,.0f} ({ctx.summary.cash_percentage:.1f}%)"
+        )
         print(f"  Invested:     ${ctx.summary.total_invested:,.0f}")
         print(f"  Unrealized:   ${ctx.summary.total_unrealized_pl:+,.0f}")
 

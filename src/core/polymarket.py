@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any
+
+from src.core.json_types import JsonObject, JsonValue, as_json_array, as_json_object
 
 # Slugs for key macro markets relevant to portfolio policy decisions.
 # These are the highest-volume Polymarket markets for Fed/macro topics.
@@ -19,6 +21,14 @@ MACRO_SLUGS = {
 }
 
 GAMMA_API_BASE = "https://gamma-api.polymarket.com"
+POLYMARKET_FETCH_ERRORS = (
+    OSError,
+    TimeoutError,
+    ValueError,
+    TypeError,
+    json.JSONDecodeError,
+    urllib.error.URLError,
+)
 
 
 @dataclass(slots=True)
@@ -30,7 +40,7 @@ class PolymarketSignal:
     error: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PolymarketSignal:
+    def from_dict(cls, data: JsonObject) -> PolymarketSignal:
         return cls(
             slug=str(data.get("slug") or ""),
             title=str(data.get("title") or ""),
@@ -41,8 +51,8 @@ class PolymarketSignal:
             error=str(data["error"]) if data.get("error") is not None else None,
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {"slug": self.slug, "title": self.title}
+    def to_dict(self) -> JsonObject:
+        d: JsonObject = {"slug": self.slug, "title": self.title}
         if self.probability is not None:
             d["probability"] = self.probability
             d["probability_pct"] = f"{self.probability * 100:.0f}%"
@@ -59,13 +69,13 @@ class PolymarketSnapshot:
     timestamp: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PolymarketSnapshot:
+    def from_dict(cls, data: JsonObject) -> PolymarketSnapshot:
         return cls(
             signals=[PolymarketSignal.from_dict(signal) for signal in data.get("signals", [])],
             timestamp=str(data["timestamp"]) if data.get("timestamp") is not None else None,
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> JsonObject:
         return {
             "signals": [s.to_dict() for s in self.signals],
             "timestamp": self.timestamp,
@@ -87,7 +97,7 @@ class PolymarketSnapshot:
 _HEADERS = {"Accept": "application/json", "User-Agent": "cli-schwab/1.0"}
 
 
-def _fetch_json(url: str) -> Any:
+def _fetch_json(url: str) -> JsonValue:
     """Fetch JSON from a URL with standard headers."""
     request = urllib.request.Request(url, headers=_HEADERS)
     with urllib.request.urlopen(request, timeout=10) as resp:
@@ -96,21 +106,24 @@ def _fetch_json(url: str) -> Any:
 
 def _search_market_by_keyword(keyword: str) -> float | str | None:
     """Fallback: search top-volume open markets by keyword."""
-    url = (
-        f"{GAMMA_API_BASE}/markets?limit=200&closed=false"
-        f"&order=volume&ascending=false"
-    )
-    data = _fetch_json(url)
+    url = f"{GAMMA_API_BASE}/markets?limit=200&closed=false" f"&order=volume&ascending=false"
+    data = as_json_array(_fetch_json(url))
     if not data:
         return None
 
     kw_lower = keyword.lower()
-    for m in data:
-        if kw_lower in m.get("question", "").lower():
-            outcome_prices = m.get("outcomePrices")
+    for market in data:
+        item = as_json_object(market)
+        if kw_lower in str(item.get("question") or "").lower():
+            outcome_prices = item.get("outcomePrices")
             if outcome_prices:
-                prices = json.loads(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
-                return float(prices[0]) if prices else None
+                prices = (
+                    json.loads(outcome_prices)
+                    if isinstance(outcome_prices, str)
+                    else outcome_prices
+                )
+                if isinstance(prices, list) and prices:
+                    return float(prices[0])
     return None
 
 
@@ -123,31 +136,45 @@ def _fetch_market_by_slug(slug: str) -> float | str | None:
     """
     # Try as a market first
     url = f"{GAMMA_API_BASE}/markets?slug={slug}&closed=false&limit=1"
-    data = _fetch_json(url)
+    data = as_json_array(_fetch_json(url))
 
     if data:
-        market = data[0] if isinstance(data, list) else data
+        market = as_json_object(data[0])
         outcome_prices = market.get("outcomePrices")
         if outcome_prices:
-            prices = json.loads(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
-            return float(prices[0]) if prices else None
-        return float(market.get("bestAsk", 0)) or None
+            prices = (
+                json.loads(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
+            )
+            if isinstance(prices, list) and prices:
+                return float(prices[0])
+        return float(market.get("bestAsk", 0) or 0) or None
 
     # Try as an event (multi-market container)
     url = f"{GAMMA_API_BASE}/events?slug={slug}&closed=false&limit=1"
-    events = _fetch_json(url)
+    events = as_json_array(_fetch_json(url))
 
     if events:
-        event = events[0] if isinstance(events, list) else events
-        markets = event.get("markets", [])
+        event = as_json_object(events[0])
+        markets = [as_json_object(item) for item in as_json_array(event.get("markets"))]
         if markets:
             parts = []
-            for m in sorted(markets, key=lambda x: float((json.loads(x.get("outcomePrices", '["0"]')) if isinstance(x.get("outcomePrices"), str) else x.get("outcomePrices", [0]))[0]), reverse=True)[:5]:
-                q = m.get("groupItemTitle") or m.get("question", "")
-                prices = m.get("outcomePrices")
+            for market in sorted(
+                markets,
+                key=lambda item: float(
+                    (
+                        json.loads(str(item.get("outcomePrices") or '["0"]'))
+                        if isinstance(item.get("outcomePrices"), str)
+                        else item.get("outcomePrices", [0])
+                    )[0]
+                ),
+                reverse=True,
+            )[:5]:
+                q = market.get("groupItemTitle") or market.get("question", "")
+                prices = market.get("outcomePrices")
                 if prices:
-                    p = json.loads(prices) if isinstance(prices, str) else prices
-                    parts.append(f"{q}: {float(p[0])*100:.0f}%")
+                    parsed_prices = json.loads(prices) if isinstance(prices, str) else prices
+                    if isinstance(parsed_prices, list) and parsed_prices:
+                        parts.append(f"{q}: {float(parsed_prices[0]) * 100:.0f}%")
             if parts:
                 return " | ".join(parts)
 
@@ -180,7 +207,7 @@ def fetch_polymarket_signals(
                 signals.append(PolymarketSignal(slug=slug, title=title, summary=result))
             else:
                 signals.append(PolymarketSignal(slug=slug, title=title, error="not found"))
-        except Exception as exc:
+        except POLYMARKET_FETCH_ERRORS as exc:
             signals.append(PolymarketSignal(slug=slug, title=title, error=str(exc)))
 
     return PolymarketSnapshot(signals=signals, timestamp=datetime.now().isoformat())

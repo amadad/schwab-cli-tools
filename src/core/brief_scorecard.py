@@ -7,8 +7,9 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
+from src.core.errors import ConfigError
+from src.core.json_types import JsonObject
 from src.core.policy import resolve_policy_path
 from src.schwab_client.paths import resolve_history_db_path
 
@@ -64,7 +65,9 @@ class BucketAlert:
 
 
 def is_excluded_alias(alias: str) -> bool:
-    return alias in EXCLUDED_ACCOUNT_MATCHES or any(token in alias for token in EXCLUDED_ACCOUNT_MATCHES)
+    return alias in EXCLUDED_ACCOUNT_MATCHES or any(
+        token in alias for token in EXCLUDED_ACCOUNT_MATCHES
+    )
 
 
 def extract_alias(account_key: str) -> str:
@@ -75,19 +78,24 @@ def resolve_policy_file() -> Path | None:
     return resolve_policy_path()
 
 
-def build_bucket_policy(policy_path: Path | None = None) -> dict[str, dict[str, Any]]:
-    policy: dict[str, dict[str, Any]] = {
+def build_bucket_policy(policy_path: Path | None = None) -> dict[str, JsonObject]:
+    policy: dict[str, JsonObject] = {
         "Business": {},
         "Cash / Bank": {},
         "DAF": {},
     }
     resolved = policy_path or resolve_policy_file()
-    cfg: dict[str, Any] | None = None
+    cfg: JsonObject | None = None
     if resolved and resolved.exists():
         try:
-            cfg = json.loads(resolved.read_text())
-        except Exception:
-            cfg = None
+            raw_cfg = json.loads(resolved.read_text())
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"Invalid policy JSON in {resolved}: {exc}") from exc
+        except OSError as exc:
+            raise ConfigError(f"Could not read policy file {resolved}: {exc}") from exc
+        if not isinstance(raw_cfg, dict):
+            raise ConfigError(f"Policy file must contain a JSON object: {resolved}")
+        cfg = raw_cfg
 
     if cfg is not None:
         for alias, bounds in (cfg.get("cash_policies") or {}).items():
@@ -109,10 +117,15 @@ def build_bucket_policy(policy_path: Path | None = None) -> dict[str, dict[str, 
                 entry["cash_warn_low"] = low / 100
             entry["cash_warn_high"] = high / 100
 
-        for inherited in (cfg.get("inherited_ira_policies") or []):
+        for inherited in cfg.get("inherited_ira_policies") or []:
             if not isinstance(inherited, dict):
                 continue
-            bucket_name = INHERITED_BUCKET_MAP.get(inherited.get("name"))
+            inherited_name = inherited.get("name")
+            bucket_name = (
+                INHERITED_BUCKET_MAP.get(inherited_name)
+                if isinstance(inherited_name, str)
+                else None
+            )
             accounts = inherited.get("accounts") or []
             if not bucket_name and accounts:
                 bucket_name = ACCOUNT_BUCKET_MAP.get(accounts[0])
@@ -148,7 +161,7 @@ def build_bucket_policy(policy_path: Path | None = None) -> dict[str, dict[str, 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     con = sqlite3.connect(str(db_path))
-    con.row_factory = sqlite3.Row
+    setattr(con, "row_factory", sqlite3.Row)  # noqa: B010
     return con
 
 
@@ -163,7 +176,7 @@ def resolve_snapshot_id(db_path: Path, snapshot_id: int | None = None) -> int | 
     return int(row["id"]) if row and row["id"] is not None else None
 
 
-def load_account_snapshots(db_path: Path, snapshot_id: int | None = None) -> list[dict[str, Any]]:
+def load_account_snapshots(db_path: Path, snapshot_id: int | None = None) -> list[JsonObject]:
     resolved_id = resolve_snapshot_id(db_path, snapshot_id)
     if resolved_id is None:
         return []
@@ -183,7 +196,7 @@ def load_prior_account_snapshots(
     *,
     snapshot_id: int | None = None,
     lookback: int = 5,
-) -> list[dict[str, dict[str, Any]]]:
+) -> list[dict[str, JsonObject]]:
     resolved_id = resolve_snapshot_id(db_path, snapshot_id)
     if resolved_id is None:
         return []
@@ -197,7 +210,7 @@ def load_prior_account_snapshots(
                 (resolved_id, lookback),
             ).fetchall()
         ]
-        snapshots: list[dict[str, dict[str, Any]]] = []
+        snapshots: list[dict[str, JsonObject]] = []
         for run_id in run_ids:
             rows = con.execute(
                 "SELECT * FROM account_snapshots WHERE snapshot_id = ?",
@@ -209,7 +222,7 @@ def load_prior_account_snapshots(
     return snapshots
 
 
-def compute_buckets(account_rows: list[dict[str, Any]]) -> dict[str, BucketMetrics]:
+def compute_buckets(account_rows: list[JsonObject]) -> dict[str, BucketMetrics]:
     buckets: dict[str, BucketMetrics] = {}
     for row in account_rows:
         alias = extract_alias(str(row["account_key"]))
@@ -225,9 +238,9 @@ def compute_buckets(account_rows: list[dict[str, Any]]) -> dict[str, BucketMetri
 
 def compute_bucket_deltas(
     current: dict[str, BucketMetrics],
-    prior_snapshots: list[dict[str, dict[str, Any]]],
+    prior_snapshots: list[dict[str, JsonObject]],
 ) -> dict[str, dict[str, float | None]]:
-    def bucket_value_from_snapshot(snapshot_map: dict[str, dict[str, Any]], bucket_name: str) -> float:
+    def bucket_value_from_snapshot(snapshot_map: dict[str, JsonObject], bucket_name: str) -> float:
         total = 0.0
         for alias, mapped_bucket in ACCOUNT_BUCKET_MAP.items():
             if mapped_bucket != bucket_name:
@@ -243,12 +256,14 @@ def compute_bucket_deltas(
         row: dict[str, float | None] = {"current": metrics.total_value}
         if prior_snapshots:
             prev_val = bucket_value_from_snapshot(prior_snapshots[0], bucket_name)
-            row["dod"] = metrics.total_value - prev_val
-            row["dod_pct"] = ((row["dod"] / prev_val) * 100) if prev_val >= 100 else None
+            dod_value = metrics.total_value - prev_val
+            row["dod"] = dod_value
+            row["dod_pct"] = ((dod_value / prev_val) * 100) if prev_val >= 100 else None
         if len(prior_snapshots) >= 5:
             week_val = bucket_value_from_snapshot(prior_snapshots[4], bucket_name)
-            row["wow"] = metrics.total_value - week_val
-            row["wow_pct"] = ((row["wow"] / week_val) * 100) if week_val >= 100 else None
+            wow_value = metrics.total_value - week_val
+            row["wow"] = wow_value
+            row["wow_pct"] = ((wow_value / week_val) * 100) if week_val >= 100 else None
         deltas[bucket_name] = row
     return deltas
 
@@ -257,7 +272,7 @@ def run_policy_checks(
     buckets: dict[str, BucketMetrics],
     deltas: dict[str, dict[str, float | None]],
     *,
-    policy: dict[str, dict[str, Any]] | None = None,
+    policy: dict[str, JsonObject] | None = None,
     today: datetime | None = None,
 ) -> list[BucketAlert]:
     alerts: list[BucketAlert] = []
@@ -322,7 +337,12 @@ def run_policy_checks(
         delta = deltas.get(bucket_name, {})
         dod_pct = delta.get("dod_pct")
         dod = delta.get("dod")
-        if dod_pct is not None and abs(dod_pct) > 3 and metrics.total_value > 50_000 and dod is not None:
+        if (
+            dod_pct is not None
+            and abs(dod_pct) > 3
+            and metrics.total_value > 50_000
+            and dod is not None
+        ):
             direction = "▲" if dod > 0 else "▼"
             alerts.append(
                 BucketAlert(
@@ -349,7 +369,7 @@ def build_scorecard(
     deltas: dict[str, dict[str, float | None]],
     alerts: list[BucketAlert],
     total_portfolio_value: float,
-) -> dict[str, Any]:
+) -> JsonObject:
     rows = []
     for bucket_name in sorted(buckets.keys()):
         metrics = buckets[bucket_name]
@@ -365,9 +385,11 @@ def build_scorecard(
             {
                 "bucket": bucket_name,
                 "value": round(metrics.total_value),
-                "pct_of_portfolio": round(metrics.total_value / total_portfolio_value * 100, 1)
-                if total_portfolio_value
-                else 0.0,
+                "pct_of_portfolio": (
+                    round(metrics.total_value / total_portfolio_value * 100, 1)
+                    if total_portfolio_value
+                    else 0.0
+                ),
                 "cash": round(metrics.total_cash),
                 "cash_pct": round(metrics.cash_pct, 1),
                 "dod": _round_optional(delta.get("dod"), 0),
@@ -400,7 +422,7 @@ def compute(
     snapshot_id: int | None = None,
     total_portfolio_value: float | None = None,
     policy_path: Path | None = None,
-) -> dict[str, Any]:
+) -> JsonObject:
     resolved_db = Path(db_path).expanduser() if db_path else resolve_history_db_path()
     current_rows = load_account_snapshots(resolved_db, snapshot_id=snapshot_id)
     prior_snapshots = load_prior_account_snapshots(

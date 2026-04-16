@@ -3,48 +3,50 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Self
+from typing import Self
+
+from src.core.json_types import JsonValue
 
 
 class _SerializableModel:
-    def to_dict(self) -> dict[str, Any]:  # pragma: no cover - interface only
+    def to_dict(self) -> dict[str, JsonValue]:  # pragma: no cover - interface only
         raise NotImplementedError
 
 
-ModelValue = _SerializableModel | list[Any] | dict[str, Any] | Any
+ModelValue = _SerializableModel | list[JsonValue] | dict[str, JsonValue] | JsonValue
 
 
-def _string(value: Any) -> str | None:
+def _string(value: JsonValue) -> str | None:
     if value is None:
         return None
     return str(value)
 
 
-def _float(value: Any, default: float = 0.0) -> float:
+def _float(value: JsonValue, default: float = 0.0) -> float:
     if value is None:
         return default
     return float(value)
 
 
-def _optional_float(value: Any) -> float | None:
+def _optional_float(value: JsonValue) -> float | None:
     if value is None:
         return None
     return float(value)
 
 
-def _int(value: Any, default: int = 0) -> int:
+def _int(value: JsonValue, default: int = 0) -> int:
     if value is None:
         return default
     return int(value)
 
 
-def _optional_int(value: Any) -> int | None:
+def _optional_int(value: JsonValue) -> int | None:
     if value is None:
         return None
     return int(value)
 
 
-def _serialize(value: ModelValue) -> Any:
+def _serialize(value: ModelValue) -> JsonValue:
     if isinstance(value, _SerializableModel):
         return value.to_dict()
     if isinstance(value, list):
@@ -54,7 +56,7 @@ def _serialize(value: ModelValue) -> Any:
     return value
 
 
-def _compact_dict(data: dict[str, Any]) -> dict[str, Any]:
+def _compact_dict(data: dict[str, JsonValue]) -> dict[str, JsonValue]:
     return {key: _serialize(value) for key, value in data.items() if value is not None}
 
 
@@ -64,13 +66,13 @@ class SnapshotError(_SerializableModel):
     message: str = ""
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             component=str(data.get("component", "unknown")),
             message=str(data.get("message", "")),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return {"component": self.component, "message": self.message}
 
 
@@ -96,7 +98,7 @@ class PositionSnapshot(_SerializableModel):
     is_money_market: bool = False
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             symbol=str(data.get("symbol", "")),
             description=_string(data.get("description")),
@@ -118,7 +120,7 @@ class PositionSnapshot(_SerializableModel):
             is_money_market=bool(data.get("is_money_market")),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return _compact_dict(
             {
                 "symbol": self.symbol,
@@ -154,7 +156,7 @@ class AccountBalance(_SerializableModel):
     buying_power: float = 0.0
     invested_amount: float = 0.0
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return _compact_dict(
             {
                 "account": self.account,
@@ -187,7 +189,7 @@ class AccountSnapshot(_SerializableModel):
     positions: list[PositionSnapshot] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             account=str(data.get("account") or data.get("name") or "Unknown"),
             account_type=_string(data.get("account_type") or data.get("type")),
@@ -207,7 +209,7 @@ class AccountSnapshot(_SerializableModel):
             ],
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return _compact_dict(
             {
                 "account": self.account,
@@ -240,7 +242,7 @@ class ManualAccount(_SerializableModel):
     tax_status: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             id=_string(data.get("id")),
             name=str(data.get("name") or data.get("account") or "Unknown"),
@@ -252,7 +254,7 @@ class ManualAccount(_SerializableModel):
             value=_float(data.get("value")),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return _compact_dict(
             {
                 "id": self.id,
@@ -276,7 +278,7 @@ class ManualAccountsSummary(_SerializableModel):
     by_category: dict[str, float] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             total_value=_float(data.get("total_value")),
             total_cash=_float(data.get("total_cash")),
@@ -288,7 +290,7 @@ class ManualAccountsSummary(_SerializableModel):
             },
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return {
             "total_value": self.total_value,
             "total_cash": self.total_cash,
@@ -310,7 +312,7 @@ class ManualAccountsPayload(_SerializableModel):
         return cls(source_path=source_path)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             source_path=_string(data.get("source_path")),
             last_updated=_string(data.get("last_updated")),
@@ -318,7 +320,7 @@ class ManualAccountsPayload(_SerializableModel):
             summary=ManualAccountsSummary.from_dict(data.get("summary", {})),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return {
             "source_path": self.source_path,
             "last_updated": self.last_updated,
@@ -333,13 +335,13 @@ class AllocationSlice(_SerializableModel):
     percentage: float = 0.0
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             value=_float(data.get("value")),
             percentage=_float(data.get("percentage")),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return {"value": self.value, "percentage": self.percentage}
 
 
@@ -350,14 +352,14 @@ class TopHolding(_SerializableModel):
     value: float = 0.0
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             symbol=str(data.get("symbol", "")),
             percentage=_float(data.get("percentage")),
             value=_float(data.get("value")),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return {
             "symbol": self.symbol,
             "percentage": self.percentage,
@@ -373,7 +375,7 @@ class ConcentrationRisk(_SerializableModel):
     risk_level: str = "Unknown"
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             symbol=str(data.get("symbol", "")),
             percentage=_float(data.get("percentage")),
@@ -381,7 +383,7 @@ class ConcentrationRisk(_SerializableModel):
             risk_level=str(data.get("risk_level", "Unknown")),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return {
             "symbol": self.symbol,
             "percentage": self.percentage,
@@ -398,7 +400,7 @@ class AllocationAnalysis(_SerializableModel):
     top_holdings_pct: list[TopHolding] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             diversification_score=_float(data.get("diversification_score")),
             by_asset_type={
@@ -413,7 +415,7 @@ class AllocationAnalysis(_SerializableModel):
             ],
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return {
             "diversification_score": self.diversification_score,
             "by_asset_type": {
@@ -441,7 +443,7 @@ class PortfolioSummary(_SerializableModel):
     manual_account_count: int | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             total_value=_float(data.get("total_value")),
             total_cash=_float(data.get("total_cash")),
@@ -460,7 +462,7 @@ class PortfolioSummary(_SerializableModel):
             manual_account_count=_optional_int(data.get("manual_account_count")),
         )
 
-    def to_dict(self, *, include_positions: bool = False) -> dict[str, Any]:
+    def to_dict(self, *, include_positions: bool = False) -> dict[str, JsonValue]:
         data = _compact_dict(
             {
                 "total_value": self.total_value,
@@ -484,12 +486,12 @@ class PortfolioSummary(_SerializableModel):
 
 @dataclass(slots=True)
 class MarketSignalDetails(_SerializableModel):
-    vix: dict[str, Any] | None = None
+    vix: dict[str, JsonValue] | None = None
     market_sentiment: str | None = None
     sector_rotation: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         vix_payload = data.get("vix")
         return cls(
             vix=dict(vix_payload) if isinstance(vix_payload, dict) else None,
@@ -497,7 +499,7 @@ class MarketSignalDetails(_SerializableModel):
             sector_rotation=_string(data.get("sector_rotation")),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return _compact_dict(
             {
                 "vix": self.vix,
@@ -515,7 +517,7 @@ class MarketSignalsSnapshot(_SerializableModel):
     timestamp: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             signals=MarketSignalDetails.from_dict(data.get("signals", {})),
             overall=_string(data.get("overall")),
@@ -523,7 +525,7 @@ class MarketSignalsSnapshot(_SerializableModel):
             timestamp=_string(data.get("timestamp")),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return _compact_dict(
             {
                 "signals": self.signals,
@@ -544,7 +546,7 @@ class VixSnapshot(_SerializableModel):
     timestamp: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             vix=_optional_float(data.get("vix")),
             change=_optional_float(data.get("change")),
@@ -554,7 +556,7 @@ class VixSnapshot(_SerializableModel):
             timestamp=_string(data.get("timestamp")),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return _compact_dict(
             {
                 "vix": self.vix,
@@ -575,7 +577,7 @@ class IndexQuote(_SerializableModel):
     change_pct: float | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             name=_string(data.get("name")),
             price=_optional_float(data.get("price")),
@@ -583,7 +585,7 @@ class IndexQuote(_SerializableModel):
             change_pct=_optional_float(data.get("change_pct")),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return _compact_dict(
             {
                 "name": self.name,
@@ -601,7 +603,7 @@ class IndicesSnapshot(_SerializableModel):
     timestamp: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             indices={
                 str(symbol): IndexQuote.from_dict(entry)
@@ -611,7 +613,7 @@ class IndicesSnapshot(_SerializableModel):
             timestamp=_string(data.get("timestamp")),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return _compact_dict(
             {
                 "indices": {symbol: entry.to_dict() for symbol, entry in self.indices.items()},
@@ -629,7 +631,7 @@ class SectorPerformanceEntry(_SerializableModel):
     change_pct: float | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             symbol=_string(data.get("symbol")),
             sector=_string(data.get("sector")),
@@ -637,7 +639,7 @@ class SectorPerformanceEntry(_SerializableModel):
             change_pct=_optional_float(data.get("change_pct")),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return _compact_dict(
             {
                 "symbol": self.symbol,
@@ -659,7 +661,7 @@ class SectorPerformanceSnapshot(_SerializableModel):
     timestamp: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             sectors=[SectorPerformanceEntry.from_dict(entry) for entry in data.get("sectors", [])],
             leaders=[str(item) for item in data.get("leaders", [])],
@@ -670,7 +672,7 @@ class SectorPerformanceSnapshot(_SerializableModel):
             timestamp=_string(data.get("timestamp")),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return _compact_dict(
             {
                 "sectors": [entry.to_dict() for entry in self.sectors],
@@ -692,7 +694,7 @@ class MarketSnapshot(_SerializableModel):
     sectors: SectorPerformanceSnapshot | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         signals_payload = data.get("signals")
         vix_payload = data.get("vix")
         indices_payload = data.get("indices")
@@ -716,7 +718,7 @@ class MarketSnapshot(_SerializableModel):
             ),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return {
             "signals": self.signals.to_dict() if self.signals else None,
             "vix": self.vix.to_dict() if self.vix else None,
@@ -734,7 +736,7 @@ class PortfolioSnapshot(_SerializableModel):
     allocation: AllocationAnalysis | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         manual_accounts_payload = data.get("manual_accounts") or {}
         return cls(
             summary=PortfolioSummary.from_dict(data.get("summary", {})),
@@ -752,7 +754,7 @@ class PortfolioSnapshot(_SerializableModel):
             ),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, JsonValue]:
         return {
             "summary": self.summary.to_dict(),
             "api_accounts": [account.to_dict() for account in self.api_accounts],
@@ -770,7 +772,7 @@ class SnapshotDocument(_SerializableModel):
     errors: list[SnapshotError] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, JsonValue]) -> Self:
         return cls(
             generated_at=str(data.get("generated_at") or data.get("timestamp") or ""),
             portfolio=PortfolioSnapshot.from_dict(data.get("portfolio", {})),
@@ -782,8 +784,8 @@ class SnapshotDocument(_SerializableModel):
             errors=[SnapshotError.from_dict(error) for error in data.get("errors", [])],
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        data: dict[str, Any] = {
+    def to_dict(self) -> dict[str, JsonValue]:
+        data: dict[str, JsonValue] = {
             "generated_at": self.generated_at,
             "portfolio": self.portfolio.to_dict(),
             "market": self.market.to_dict() if self.market else None,

@@ -1,4 +1,8 @@
-"""Minimal advisor recommendation journal and evaluator."""
+"""Recommendation-engine journal and evaluator.
+
+The legacy module name is retained for compatibility while the repo terminology shifts
+from "advisor sidecar" to "recommendation engine".
+"""
 
 from __future__ import annotations
 
@@ -9,12 +13,12 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 from src.core.advisor_models import AdvisorRecommendation
 from src.core.advisor_prompts import RECOMMEND_PROMPT
 from src.core.advisor_scoring import classify_outcome, compute_policy_health_score
 from src.core.context import PortfolioContext
+from src.core.json_types import JsonObject, as_json_array, as_json_object
 from src.schwab_client._advisor.store import AdvisorStore
 from src.schwab_client.history import HistoryStore
 
@@ -30,7 +34,7 @@ class RecommendationRunResult:
     db_path: str
     reused_existing_issue: bool = False
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> JsonObject:
         return {
             "run_id": self.run_id,
             "snapshot_id": self.snapshot_id,
@@ -41,109 +45,123 @@ class RecommendationRunResult:
 
 
 class AdvisorSidecarService:
-    def __init__(self, *, repo_root: Path | None = None, store: AdvisorStore | None = None) -> None:
+    """Operationally isolated recommendation-engine service.
+
+    The class name is retained for compatibility while the architecture terminology
+    shifts from "advisor sidecar" to "recommendation engine".
+    """
+
+    def __init__(
+        self,
+        *,
+        repo_root: Path | None = None,
+        store: AdvisorStore | None = None,
+        history_store: HistoryStore | None = None,
+    ) -> None:
         self.repo_root = repo_root or Path.cwd()
         self.store = store or AdvisorStore()
-        self._last_context_payload: dict[str, Any] | None = None
+        self._history_store = history_store
 
-    def capture_source_snapshot(self, *, include_market: bool = True) -> dict[str, Any]:
-        cmd = ["uv", "run", "schwab", "snapshot", "--json"]
-        if not include_market:
-            cmd.append("--no-market")
-        result = subprocess.run(
-            cmd,
-            cwd=self.repo_root,
-            capture_output=True,
-            text=True,
-            timeout=240,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr or result.stdout)
-        envelope = json.loads(result.stdout)
-        data = envelope.get("data", envelope)
-        if isinstance(data, dict) and isinstance(data.get("snapshot"), dict):
-            return data["snapshot"]
-        return data
+    def _history(self) -> HistoryStore:
+        if self._history_store is None:
+            self._history_store = HistoryStore()
+        return self._history_store
 
-    def load_snapshot_by_id(self, snapshot_id: int) -> dict[str, Any]:
-        result = subprocess.run(
-            ["uv", "run", "schwab", "history", "--snapshot-id", str(snapshot_id), "--json"],
-            cwd=self.repo_root,
-            capture_output=True,
-            text=True,
-            timeout=60,
+    def capture_source_snapshot(self, *, include_market: bool = True) -> JsonObject:
+        from src.core.errors import ConfigError
+        from src.schwab_client.cli.context import get_cached_market_client, get_client
+        from src.schwab_client.snapshot import collect_snapshot
+
+        client = get_client()
+        market_client = None
+        market_error: JsonObject | None = None
+        if include_market:
+            try:
+                market_client = get_cached_market_client()
+            except ConfigError as exc:
+                market_error = {"component": "market", "message": str(exc)}
+                include_market = False
+
+        snapshot = collect_snapshot(
+            client,
+            include_market=include_market,
+            market_client=market_client,
         )
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr or result.stdout)
-        envelope = json.loads(result.stdout)
-        data = envelope.get("data", envelope)
-        snapshot = data.get("snapshot") if isinstance(data, dict) else None
-        if not isinstance(snapshot, dict):
-            snapshot = data if isinstance(data, dict) else {}
-        if not isinstance(snapshot.get("history"), dict):
-            snapshot = dict(snapshot)
-            snapshot["history"] = {
-                "snapshot_id": data.get("snapshot_id", snapshot_id),
-                "db_path": data.get("db_path"),
-            }
+        if market_error is not None:
+            snapshot.setdefault("errors", []).append(market_error)
+
+        history = self._history().store_snapshot(snapshot, source_command="advisor-recommend")
+        snapshot["history"] = history
         return snapshot
 
-    def capture_context(self, *, include_lynch: bool = True) -> dict[str, Any]:
-        cmd = ["uv", "run", "schwab", "context", "--json"]
-        if include_lynch:
-            cmd.append("--lynch")
-        result = subprocess.run(
-            cmd,
-            cwd=self.repo_root,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr or result.stdout)
-        envelope = json.loads(result.stdout)
-        payload = envelope.get("data", envelope)
-        self._last_context_payload = payload
+    def load_snapshot_by_id(self, snapshot_id: int) -> JsonObject:
+        snapshot = self._history().get_snapshot_payload(snapshot_id)
+        if snapshot is None:
+            raise ValueError(f"Snapshot {snapshot_id} not found")
+
+        payload = dict(snapshot)
+        history = as_json_object(payload.get("history")) or {}
+        payload["history"] = {
+            "snapshot_id": snapshot_id,
+            "db_path": str(self._history().path),
+            **history,
+        }
         return payload
 
-    def render_context_prompt(self) -> str:
-        if self._last_context_payload is not None:
-            context = PortfolioContext.from_dict(self._last_context_payload)
-            return context.to_prompt_block()
+    def capture_context_model(self, *, include_lynch: bool = True) -> PortfolioContext:
+        from src.core.errors import ConfigError
+        from src.schwab_client.cli.context import get_cached_market_client, get_client
 
-        result = subprocess.run(
-            ["uv", "run", "schwab", "context", "--prompt"],
-            cwd=self.repo_root,
-            capture_output=True,
-            text=True,
-            timeout=180,
+        client = get_client()
+        market_client = None
+        market_error: str | None = None
+        try:
+            market_client = get_cached_market_client()
+        except ConfigError as exc:
+            market_error = f"market_auth: {exc}"
+
+        context = PortfolioContext.assemble(
+            client,
+            market_client=market_client,
+            include_lynch=include_lynch,
         )
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr or result.stdout)
-        return result.stdout.strip()
+        if market_error is not None:
+            context.errors.append(market_error)
+        return context
 
-    def current_snapshot_provenance(self, context: dict[str, Any]) -> tuple[int | None, str | None]:
-        history = context.get("history") or {}
-        return history.get("snapshot_id"), history.get("db_path")
+    def capture_context(self, *, include_lynch: bool = True) -> JsonObject:
+        return self.capture_context_model(include_lynch=include_lynch).to_dict()
+
+    def current_snapshot_provenance(
+        self, context: PortfolioContext
+    ) -> tuple[int | None, str | None]:
+        history = as_json_object(context.history)
+        snapshot_id = history.get("snapshot_id")
+        db_path = history.get("db_path")
+        return (
+            int(snapshot_id) if isinstance(snapshot_id, int | float) else None,
+            str(db_path) if db_path is not None else None,
+        )
 
     def _extract_baseline_price(self, recommendation: AdvisorRecommendation) -> float | None:
         if recommendation.target_type != "symbol":
             return None
-        sym = recommendation.target_id
-        result = subprocess.run(
-            ["uv", "run", "schwab", "fundamentals", sym, "--json"],
-            cwd=self.repo_root,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if result.returncode != 0:
-            return None
+
+        from src.core.errors import PortfolioError
+        from src.schwab_client.cli.context import get_client
+
+        symbol = recommendation.target_id.upper()
         try:
-            envelope = json.loads(result.stdout)
-            data = envelope.get("data", envelope)
-            return float(data.get("lastPrice")) if data.get("lastPrice") is not None else None
-        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = get_client().get_quote(symbol)
+            quote_root = as_json_object(payload.get(symbol)) or as_json_object(
+                payload.get(symbol.lower())
+            )
+            quote = as_json_object(quote_root.get("quote"))
+            last_price = quote.get("lastPrice") or quote.get("closePrice") or quote.get("mark")
+            if last_price is None:
+                return None
+            return float(last_price)
+        except (PortfolioError, OSError, TypeError, ValueError, AttributeError, KeyError):
             return None
 
     def _resolve_model_command(self, model_command: str | None = None) -> str:
@@ -154,7 +172,7 @@ class AdvisorSidecarService:
         prompt: str,
         *,
         model_command: str | None = None,
-    ) -> tuple[dict[str, Any], str]:
+    ) -> tuple[JsonObject, str]:
         command = self._resolve_model_command(model_command)
         result = subprocess.run(
             shlex.split(command),
@@ -186,23 +204,31 @@ class AdvisorSidecarService:
             raise ValueError("Model must return a JSON object")
         return payload, raw
 
-    def _context_from_snapshot(
+    def _decision_context_from_snapshot(
         self,
-        snapshot: dict[str, Any],
+        snapshot: JsonObject,
         *,
-        ytd_distributions: dict[str, Any] | None = None,
-        supplemental: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Any] | None, str | None]:
-        context, reason = PortfolioContext.from_snapshot_payload(
+        supplemental_context: PortfolioContext | None = None,
+    ) -> tuple[PortfolioContext | None, str | None]:
+        supplemental_payload = (
+            supplemental_context.to_dict() if supplemental_context is not None else None
+        )
+        ytd_distributions = (
+            supplemental_context.ytd_distributions if supplemental_context is not None else None
+        )
+        return PortfolioContext.from_snapshot_payload(
             snapshot,
             ytd_distributions=ytd_distributions,
-            supplemental=supplemental,
+            supplemental=supplemental_payload,
         )
-        return context.to_dict(), reason
 
     def _derive_issue_key(self, recommendation: AdvisorRecommendation) -> str | None:
-        target_id = (recommendation.target_id or recommendation.target_type or "portfolio").strip().lower()
-        normalized_target = "_".join(part for part in __import__("re").sub(r"[^a-z0-9]+", " ", target_id).split() if part)
+        target_id = (
+            (recommendation.target_id or recommendation.target_type or "portfolio").strip().lower()
+        )
+        normalized_target = "_".join(
+            part for part in __import__("re").sub(r"[^a-z0-9]+", " ", target_id).split() if part
+        )
         if not normalized_target:
             return None
         return ":".join(
@@ -214,46 +240,49 @@ class AdvisorSidecarService:
             ]
         )
 
-    def _derive_novelty_hash(self, recommendation: AdvisorRecommendation, context: dict[str, Any]) -> str:
+    def _derive_novelty_hash(
+        self, recommendation: AdvisorRecommendation, context: PortfolioContext
+    ) -> str:
         import hashlib
 
         payload = {
             "issue_key": self._derive_issue_key(recommendation),
             "target_id": recommendation.target_id,
             "direction": recommendation.direction,
-            "regime": (context.get("regime") or {}).get("regime"),
+            "regime": context.regime.regime if context.regime is not None else None,
             "policy_alerts": [
                 {
-                    "bucket": alert.get("bucket"),
-                    "severity": alert.get("severity"),
-                    "message": alert.get("message"),
+                    "bucket": alert.bucket,
+                    "severity": alert.severity,
+                    "message": alert.message,
                 }
-                for alert in ((context.get("policy_delta") or {}).get("alerts") or [])[:5]
+                for alert in (context.policy_delta.alerts if context.policy_delta else [])[:5]
             ],
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
-    def _derive_why_now_class(self, recommendation: AdvisorRecommendation, context: dict[str, Any]) -> str:
+    def _derive_why_now_class(
+        self, recommendation: AdvisorRecommendation, context: PortfolioContext
+    ) -> str:
         target = recommendation.target_id.lower()
-        alerts = ((context.get("policy_delta") or {}).get("alerts") or [])
-        if any(target in str(alert.get("bucket") or "").lower() for alert in alerts):
+        alerts = context.policy_delta.alerts if context.policy_delta else []
+        if any(target in str(alert.bucket or "").lower() for alert in alerts):
             return "policy_alert"
-        if context.get("regime"):
+        if context.regime is not None:
             return "market_regime"
-        if context.get("polymarket"):
+        if context.polymarket is not None:
             return "macro_signal"
         return "standing_issue"
 
-    def recommend_from_context(
+    def recommend_from_decision_context(
         self,
-        context: dict[str, Any],
+        context: PortfolioContext,
         *,
         model_command: str | None = None,
     ) -> RecommendationRunResult:
         self.store.initialize()
-        self._last_context_payload = context
 
-        prompt_block = PortfolioContext.from_dict(context).to_prompt_block()
+        prompt_block = context.to_prompt_block()
         prompt = RECOMMEND_PROMPT.replace("{context}", prompt_block)
         parsed, raw = self.generate_structured_recommendation(prompt, model_command=model_command)
         rec = AdvisorRecommendation.from_dict(parsed)
@@ -275,7 +304,7 @@ class AdvisorSidecarService:
         baseline_price = self._extract_baseline_price(rec)
         resolved_model_command = self._resolve_model_command(model_command)
         run_id = self.store.insert_recommendation_run(
-            assembled_at=context.get("assembled_at"),
+            assembled_at=context.assembled_at,
             source_snapshot_id=snapshot_id,
             source_history_db_path=db_path,
             recommendation_type=rec.recommendation_type,
@@ -287,16 +316,16 @@ class AdvisorSidecarService:
             horizon_days=rec.horizon_days,
             benchmark_symbol=rec.benchmark_symbol,
             baseline_price=baseline_price,
-            baseline_state_json=context,
-            market_regime=(context.get("regime") or {}).get("regime"),
-            vix_value=(context.get("vix") or {}).get("vix"),
+            baseline_state_json=context.to_dict(),
+            market_regime=context.regime.regime if context.regime is not None else None,
+            vix_value=context.vix.vix if context.vix is not None else None,
             confidence=rec.confidence,
             tags_json=rec.tags or [],
             raw_prompt=prompt,
             raw_response=raw,
             parsed_response_json=rec.to_dict(),
-            market_available=context.get("market_available", False),
-            manual_accounts_included=context.get("manual_accounts_included", False),
+            market_available=context.market_available,
+            manual_accounts_included=context.manual_accounts_included,
             model_command=resolved_model_command,
             issue_key=issue_key,
             novelty_hash=self._derive_novelty_hash(rec, context),
@@ -313,6 +342,22 @@ class AdvisorSidecarService:
             reused_existing_issue=False,
         )
 
+    def recommend_from_context(
+        self,
+        context: PortfolioContext | JsonObject,
+        *,
+        model_command: str | None = None,
+    ) -> RecommendationRunResult:
+        context_model = (
+            context
+            if isinstance(context, PortfolioContext)
+            else PortfolioContext.from_dict(context)
+        )
+        return self.recommend_from_decision_context(
+            context_model,
+            model_command=model_command,
+        )
+
     def recommend(
         self,
         *,
@@ -325,30 +370,29 @@ class AdvisorSidecarService:
             if reuse_snapshot_id is not None
             else self.capture_source_snapshot()
         )
-        supplemental_context = self.capture_context(include_lynch=True)
-        context, _ = self._context_from_snapshot(
+        supplemental_context = self.capture_context_model(include_lynch=True)
+        context, _ = self._decision_context_from_snapshot(
             snapshot,
-            ytd_distributions=supplemental_context.get("ytd_distributions"),
-            supplemental=supplemental_context,
+            supplemental_context=supplemental_context,
         )
         if context is None:
             raise ValueError("Could not build advisor context from captured snapshot")
-        return self.recommend_from_context(context, model_command=model_command)
+        return self.recommend_from_decision_context(context, model_command=model_command)
 
-    def _parse_run_created_at(self, run: dict[str, Any]) -> datetime:
+    def _parse_run_created_at(self, run: JsonObject) -> datetime:
         created_at = str(run.get("created_at") or "")
         try:
             return datetime.fromisoformat(created_at)
         except ValueError:
             return datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
 
-    def _ready_at(self, run: dict[str, Any]) -> datetime:
+    def _ready_at(self, run: JsonObject) -> datetime:
         created_at = self._parse_run_created_at(run)
         horizon_days = int(run.get("horizon_days") or 0)
         return created_at + timedelta(days=max(horizon_days, 0))
 
-    def _latest_feedback(self, run: dict[str, Any]) -> tuple[str | None, str | None]:
-        feedback = run.get("feedback") or []
+    def _latest_feedback(self, run: JsonObject) -> tuple[str | None, str | None]:
+        feedback = as_json_array(run.get("feedback"))
         if not feedback:
             return None, None
         latest = feedback[0]
@@ -363,39 +407,42 @@ class AdvisorSidecarService:
 
     def _before_context(
         self,
-        run: dict[str, Any],
+        run: JsonObject,
         history_store: HistoryStore,
-    ) -> tuple[dict[str, Any] | None, str | None]:
-        baseline = run.get("baseline_state_json") if isinstance(run.get("baseline_state_json"), dict) else None
+    ) -> tuple[PortfolioContext | None, str | None]:
+        baseline_payload = (
+            run.get("baseline_state_json")
+            if isinstance(run.get("baseline_state_json"), dict)
+            else None
+        )
+        baseline_context = (
+            PortfolioContext.from_dict(baseline_payload) if baseline_payload is not None else None
+        )
         source_snapshot_id = run.get("source_snapshot_id")
         if source_snapshot_id is not None:
             snapshot = history_store.get_snapshot_payload(int(source_snapshot_id))
             if snapshot is not None:
-                baseline_ytd = (
-                    baseline.get("ytd_distributions") if isinstance(baseline, dict) else None
-                )
-                context, reason = self._context_from_snapshot(
+                context, reason = self._decision_context_from_snapshot(
                     snapshot,
-                    ytd_distributions=baseline_ytd,
-                    supplemental=baseline,
+                    supplemental_context=baseline_context,
                 )
                 if context is not None and reason is None:
                     return context, None
-                if baseline is not None:
-                    return baseline, None
+                if baseline_context is not None:
+                    return baseline_context, None
                 return context, reason
 
-        if baseline is not None:
-            return baseline, None
+        if baseline_context is not None:
+            return baseline_context, None
         return None, "missing_baseline_context"
 
     def _record_ignored_evaluation(
         self,
         *,
-        run: dict[str, Any],
+        run: JsonObject,
         feedback_status: str,
         feedback_notes: str | None,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         notes = "Recommendation ignored by operator; no causal evaluation was recorded."
         if feedback_notes:
             notes = f"{notes} Feedback note: {feedback_notes}"
@@ -430,11 +477,11 @@ class AdvisorSidecarService:
             "notes": notes,
         }
 
-    def evaluate_open_runs(self) -> dict[str, Any]:
+    def evaluate_open_runs(self) -> JsonObject:
         self.store.initialize()
-        history_store = HistoryStore()
-        evaluated: list[dict[str, Any]] = []
-        skipped: list[dict[str, Any]] = []
+        history_store = self._history()
+        evaluated: list[JsonObject] = []
+        skipped: list[JsonObject] = []
 
         for row in self.store.list_open_runs():
             run = self.store.get_run(row["id"])
@@ -477,7 +524,7 @@ class AdvisorSidecarService:
             before_context, before_reason = self._before_context(run, history_store)
             after_snapshot = history_store.get_snapshot_payload(int(candidate["snapshot_id"]))
             after_context, after_reason = (
-                self._context_from_snapshot(after_snapshot)
+                self._decision_context_from_snapshot(after_snapshot)
                 if after_snapshot is not None
                 else (None, "missing_evaluation_snapshot")
             )

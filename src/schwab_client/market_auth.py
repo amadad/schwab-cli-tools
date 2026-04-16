@@ -10,11 +10,14 @@ Usage:
 
 import argparse
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 from schwab import auth
+
+from src.core.errors import ConfigError
 
 from .auth import (
     TOKEN_MAX_AGE_SECONDS,
@@ -26,6 +29,7 @@ from .auth import (
 load_dotenv()
 
 MARKET_TOKEN_PATH_ENV = "SCHWAB_MARKET_TOKEN_PATH"
+MARKET_AUTH_ERRORS = (ConfigError, OSError, sqlite3.Error, ValueError, TypeError, RuntimeError)
 
 
 def resolve_market_token_path() -> Path:
@@ -165,7 +169,7 @@ def authenticate_market_data(args: argparse.Namespace | None = None):
 
         return client
 
-    except Exception as e:
+    except MARKET_AUTH_ERRORS as e:
         print(f"\nAuthentication failed: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -240,7 +244,7 @@ def authenticate_market_data_manual(
 
         return client
 
-    except Exception as e:
+    except MARKET_AUTH_ERRORS as e:
         print(f"\nAuthentication failed: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -271,7 +275,7 @@ def get_market_client():
             if client.token_age() >= TOKEN_MAX_AGE_SECONDS:
                 manager.delete_tokens()
                 client = None
-        except Exception:
+        except MARKET_AUTH_ERRORS:
             manager.delete_tokens()
             client = None
 

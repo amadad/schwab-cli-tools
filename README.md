@@ -34,7 +34,7 @@ Verify the installed command:
 ```bash
 command -v schwab
 schwab --help
-schwab-advisor --help   # optional sidecar CLI
+schwab-advisor --help   # optional recommendation-engine CLI
 python scripts/verify_agent_cli.py --account <account-alias>
 ```
 
@@ -212,10 +212,12 @@ The brief pipeline is DB-backed. Nightly state lives in canonical SQLite history
 `brief_runs` / `brief_deliveries`, so morning send and debugging no longer depend on
 matching JSON files or `sent.json`.
 
-### Advisor Sidecar Commands
+### Recommendation Engine (`schwab-advisor`) Commands
 
-The advisor loop is intentionally separate from the main `schwab` CLI. It writes only
-to its own SQLite store under `./private/advisor/advisor.db` by default.
+The recommendation engine is intentionally operationally isolated from the main
+`schwab` CLI. It writes only to its own SQLite store under `./private/advisor/advisor.db`
+by default while the workflow remains experimental. Internally, recommendation generation
+now consumes `PortfolioContext` as its canonical decision-context contract.
 
 ```bash
 schwab-advisor status --json
@@ -345,7 +347,7 @@ export SCHWAB_TOKEN_PATH=~/.cli-schwab/tokens/schwab_token.json
 export SCHWAB_MARKET_TOKEN_PATH=~/.cli-schwab/tokens/schwab_market_token.json
 # A local SQLite sidecar (tokens.db) is created next to the token files automatically
 
-# Advisor sidecar
+# Recommendation engine (still exposed via schwab-advisor)
 export SCHWAB_ADVISOR_DB_PATH=./private/advisor/advisor.db
 export SCHWAB_ADVISOR_MODEL_COMMAND='codex exec -m gpt-5.4 --skip-git-repo-check --cd .'
 
@@ -421,14 +423,18 @@ and `private/reports/*.json` into the database.
 
 ## Architecture
 
+Conceptually, the repo is organized as: **portfolio rail + market rail → canonical
+state → constraints/signals → recommendation/evaluation loop**.
+
 See [`docs/architecture.md`](docs/architecture.md) for module boundaries and extension points.
-The opt-in recommendation-learning adjunct is documented separately in
-[`docs/advisor-sidecar.md`](docs/advisor-sidecar.md) so it can evolve without
-changing the main CLI/history contract.
+The opt-in recommendation engine is documented separately in
+[`docs/advisor-sidecar.md`](docs/advisor-sidecar.md); the file path is retained for
+continuity even though the architecture is now framed as a downstream
+recommendation/evaluation layer rather than a generic "sidecar".
 
 ```
 src/schwab_client/
-├── advisor_cli.py          # Optional schwab-advisor entrypoint
+├── advisor_cli.py          # Optional schwab-advisor recommendation-engine entrypoint
 ├── runtime_env.py          # Explicit runtime-only secret/env loading
 ├── cli/                    # Modular CLI package
 │   ├── __init__.py         # Entry point, argparse, routing
@@ -443,7 +449,7 @@ src/schwab_client/
 │       ├── context_cmd.py  # context prompt / memo assembly
 │       ├── brief_cmd.py    # brief nightly/send/status/show
 │       └── report.py       # report, snapshot
-├── _advisor/               # Advisor sidecar schema + persistence
+├── _advisor/               # Recommendation store schema + persistence
 ├── _client/                # Internal client mixins / shared helpers
 ├── _history/               # Internal history schema + normalization + store
 ├── auth.py                 # Portfolio API authentication
@@ -456,12 +462,12 @@ src/core/                   # Business logic and portfolio analysis helpers
 ├── advisor_models.py       # Typed recommendation payloads
 ├── advisor_prompts.py      # Structured recommendation prompts
 ├── advisor_scoring.py      # Deterministic outcome scoring
-├── advisor_sidecar.py      # Sidecar orchestration
+├── advisor_sidecar.py      # Recommendation-engine orchestration (legacy filename)
 ├── brief_analysis.py       # Brief narrative analysis + deterministic fallback
 ├── brief_render.py         # Brief HTML/text rendering + delivery helper
 ├── brief_scorecard.py      # Deterministic bucket scorecard
 ├── brief_service.py        # End-to-end brief orchestration
-├── context.py              # Portfolio context assembly
+├── context.py              # Portfolio context assembly + canonical decision context
 ├── portfolio_service.py    # Portfolio aggregation
 ├── market_service.py       # Market data processing
 ├── snapshot_service.py     # Manual-account merge + snapshot helpers
@@ -482,7 +488,7 @@ config/
 docs/
 ├── history.md              # Canonical snapshot/history/query reference
 ├── account-config.md       # Canonical account config reference
-├── advisor-sidecar.md      # Experimental opt-in recommendation-learning sidecar
+├── advisor-sidecar.md      # Recommendation-engine reference (legacy filename)
 └── _solutions.md           # Append-only solved-problems log
 ```
 

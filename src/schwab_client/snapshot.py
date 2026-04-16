@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from config.secure_account_config import secure_config
+from src.core.errors import PortfolioError
+from src.core.json_types import JsonObject
 from src.core.market_service import (
     get_market_indices,
     get_market_signals,
@@ -47,6 +48,8 @@ from .client import MONEY_MARKET_SYMBOLS, SchwabClientWrapper
 MANUAL_ACCOUNTS_ENV_VAR = path_utils.MANUAL_ACCOUNTS_ENV_VAR
 resolve_manual_accounts_path = path_utils.resolve_manual_accounts_path
 
+SNAPSHOT_MARKET_ERRORS = (PortfolioError, OSError, ValueError, TypeError, AttributeError)
+
 
 def load_manual_accounts_model(path: str | Path | None = None) -> ManualAccountsPayload:
     """Load manual account metadata used for holistic portfolio snapshots."""
@@ -63,19 +66,20 @@ def load_manual_accounts_model(path: str | Path | None = None) -> ManualAccounts
 
     with resolved_path.open() as handle:
         payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Manual accounts file must contain a JSON object: {resolved_path}")
 
-    accounts = [ManualAccount.from_dict(account) for account in payload.get("accounts", [])]
+    accounts = [
+        ManualAccount.from_dict(account)
+        for account in payload.get("accounts", [])
+        if isinstance(account, dict)
+    ]
     return ManualAccountsPayload(
         source_path=str(resolved_path),
         last_updated=payload.get("_last_updated"),
         accounts=accounts,
         summary=summarize_manual_accounts_model(accounts),
     )
-
-
-def load_manual_accounts(path: str | Path | None = None) -> dict[str, Any]:
-    """Load manual account metadata used for holistic portfolio snapshots."""
-    return load_manual_accounts_model(path).to_dict()
 
 
 def get_account_display_name(account_number: str) -> str:
@@ -106,7 +110,7 @@ def _sanitize_position_model(position: PositionSnapshot) -> PositionSnapshot:
 
 
 def _sanitize_positions_model(
-    positions: Sequence[PositionSnapshot | dict[str, Any]],
+    positions: Sequence[PositionSnapshot | JsonObject],
 ) -> list[PositionSnapshot]:
     sanitized: list[PositionSnapshot] = []
     for position in positions:
@@ -119,13 +123,13 @@ def _sanitize_positions_model(
     return sanitized
 
 
-def sanitize_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def sanitize_positions(positions: list[JsonObject]) -> list[JsonObject]:
     """Sanitize positions by masking account numbers."""
     return [position.to_dict() for position in _sanitize_positions_model(positions)]
 
 
 def _sanitize_account_snapshots_model(
-    accounts: Sequence[AccountSnapshot | dict[str, Any]],
+    accounts: Sequence[AccountSnapshot | JsonObject],
 ) -> list[AccountSnapshot]:
     sanitized: list[AccountSnapshot] = []
 
@@ -151,39 +155,51 @@ def _sanitize_account_snapshots_model(
     return sanitized
 
 
-def sanitize_account_snapshots(accounts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Sanitize account snapshots by masking account identifiers."""
-    return [account.to_dict() for account in _sanitize_account_snapshots_model(accounts)]
+def _capture_market_component[MarketComponentT](
+    *,
+    component: str,
+    fetch: Callable[[], JsonObject],
+    build: Callable[[JsonObject], MarketComponentT],
+    errors: list[SnapshotError],
+) -> MarketComponentT | None:
+    try:
+        return build(fetch())
+    except SNAPSHOT_MARKET_ERRORS as exc:  # pragma: no cover - live API wrapper
+        errors.append(SnapshotError(component=component, message=str(exc)))
+        return None
 
 
 def _build_market_snapshot_model(
-    market_client: Any,
+    market_client: object,
 ) -> tuple[MarketSnapshot, list[SnapshotError]]:
     """Collect market context with per-component error isolation."""
     market_snapshot = MarketSnapshot()
     errors: list[SnapshotError] = []
 
-    try:
-        market_snapshot.signals = MarketSignalsSnapshot.from_dict(get_market_signals(market_client))
-    except Exception as exc:  # pragma: no cover - defensive wrapper
-        errors.append(SnapshotError(component="market.signals", message=str(exc)))
-
-    try:
-        market_snapshot.vix = VixSnapshot.from_dict(get_vix(market_client))
-    except Exception as exc:  # pragma: no cover - defensive wrapper
-        errors.append(SnapshotError(component="market.vix", message=str(exc)))
-
-    try:
-        market_snapshot.indices = IndicesSnapshot.from_dict(get_market_indices(market_client))
-    except Exception as exc:  # pragma: no cover - defensive wrapper
-        errors.append(SnapshotError(component="market.indices", message=str(exc)))
-
-    try:
-        market_snapshot.sectors = SectorPerformanceSnapshot.from_dict(
-            get_sector_performance(market_client)
-        )
-    except Exception as exc:  # pragma: no cover - defensive wrapper
-        errors.append(SnapshotError(component="market.sectors", message=str(exc)))
+    market_snapshot.signals = _capture_market_component(
+        component="market.signals",
+        fetch=lambda: get_market_signals(market_client),
+        build=MarketSignalsSnapshot.from_dict,
+        errors=errors,
+    )
+    market_snapshot.vix = _capture_market_component(
+        component="market.vix",
+        fetch=lambda: get_vix(market_client),
+        build=VixSnapshot.from_dict,
+        errors=errors,
+    )
+    market_snapshot.indices = _capture_market_component(
+        component="market.indices",
+        fetch=lambda: get_market_indices(market_client),
+        build=IndicesSnapshot.from_dict,
+        errors=errors,
+    )
+    market_snapshot.sectors = _capture_market_component(
+        component="market.sectors",
+        fetch=lambda: get_sector_performance(market_client),
+        build=SectorPerformanceSnapshot.from_dict,
+        errors=errors,
+    )
 
     return market_snapshot, errors
 
@@ -193,7 +209,7 @@ def collect_snapshot_document(
     *,
     include_market: bool = True,
     include_manual_accounts: bool = True,
-    market_client: Any | None = None,
+    market_client: object | None = None,
     manual_accounts_path: str | Path | None = None,
     timestamp: datetime | None = None,
 ) -> SnapshotDocument:
@@ -224,7 +240,11 @@ def collect_snapshot_document(
     if include_manual_accounts:
         try:
             manual_accounts = load_manual_accounts_model(manual_accounts_path)
-        except Exception as exc:  # pragma: no cover - defensive wrapper
+        except (
+            OSError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:  # pragma: no cover - file wrapper
             errors.append(SnapshotError(component="portfolio.manual_accounts", message=str(exc)))
 
     combined_summary = merge_portfolio_summary_model(api_summary, manual_accounts.accounts)
@@ -261,10 +281,10 @@ def collect_snapshot(
     *,
     include_market: bool = True,
     include_manual_accounts: bool = True,
-    market_client: Any | None = None,
+    market_client: object | None = None,
     manual_accounts_path: str | Path | None = None,
     timestamp: datetime | None = None,
-) -> dict[str, Any]:
+) -> JsonObject:
     """Collect a canonical snapshot document.
 
     The resulting document is designed to be both persisted in SQLite and saved

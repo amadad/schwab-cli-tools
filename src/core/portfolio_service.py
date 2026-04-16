@@ -326,22 +326,6 @@ def build_account_snapshots_model(
     return snapshots
 
 
-def build_account_snapshots(
-    accounts: list[dict],
-    account_name_resolver: AccountNameResolver,
-    money_market_symbols: set[str] | frozenset[str],
-) -> list[dict]:
-    """Build normalized account snapshots, including underlying positions."""
-    return [
-        snapshot.to_dict()
-        for snapshot in build_account_snapshots_model(
-            accounts,
-            account_name_resolver,
-            money_market_symbols,
-        )
-    ]
-
-
 def analyze_allocation_model(accounts: list[dict]) -> AllocationAnalysis:
     """Analyze portfolio allocation and concentration risks."""
     total_value = 0.0

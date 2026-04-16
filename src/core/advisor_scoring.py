@@ -3,26 +3,63 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+
+from src.core.context import PortfolioContext
 
 
-def _policy_delta_from_context(context: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
-    if context is None:
+def _coerce_float(value: object) -> float | None:
+    if isinstance(value, bool) or value is None:
         return None
-    if "policy_delta" in context:
-        policy_delta = context.get("policy_delta")
-        return policy_delta if isinstance(policy_delta, Mapping) else None
-    if any(key in context for key in ("alerts", "distribution_pacing", "calendar_actions", "checked_at")):
-        return context
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
     return None
 
 
-def compute_policy_health_score(context: Mapping[str, Any] | None) -> float | None:
+def _mapping_from_context(
+    context: PortfolioContext | Mapping[str, object] | None,
+) -> Mapping[str, object] | None:
+    if context is None:
+        return None
+    if isinstance(context, PortfolioContext):
+        return context.to_dict()
+    return context
+
+
+def _policy_delta_from_context(
+    context: PortfolioContext | Mapping[str, object] | None,
+) -> Mapping[str, object] | None:
+    context_mapping = _mapping_from_context(context)
+    if context_mapping is None:
+        return None
+    if "policy_delta" in context_mapping:
+        policy_delta = context_mapping.get("policy_delta")
+        return policy_delta if isinstance(policy_delta, Mapping) else None
+    if any(
+        key in context_mapping
+        for key in ("alerts", "distribution_pacing", "calendar_actions", "checked_at")
+    ):
+        return context_mapping
+    return None
+
+
+def compute_policy_health_score(
+    context: PortfolioContext | Mapping[str, object] | None,
+) -> float | None:
+    context_mapping = _mapping_from_context(context)
     policy = _policy_delta_from_context(context)
     if policy is None:
         return None
 
-    alerts = policy.get("alerts") or []
+    raw_alerts = policy.get("alerts")
+    alerts = raw_alerts if isinstance(raw_alerts, list) else []
     total = 100.0
     for alert in alerts:
         if not isinstance(alert, Mapping):
@@ -34,24 +71,27 @@ def compute_policy_health_score(context: Mapping[str, Any] | None) -> float | No
             total -= 10
         else:
             total -= 3
-    for pacing in policy.get("distribution_pacing") or []:
+
+    raw_distribution_pacing = policy.get("distribution_pacing")
+    distribution_pacing = (
+        raw_distribution_pacing if isinstance(raw_distribution_pacing, list) else []
+    )
+    for pacing in distribution_pacing:
         if not isinstance(pacing, Mapping):
             continue
         if not pacing.get("on_track", True):
             total -= 15
+
     portfolio_cash = None
-    summary = context.get('summary') if isinstance(context, Mapping) else None
+    summary = context_mapping.get("summary") if isinstance(context_mapping, Mapping) else None
     if isinstance(summary, Mapping):
-        portfolio_cash = summary.get('cash_percentage')
-    try:
-        if portfolio_cash is not None:
-            pct = float(portfolio_cash)
-            if pct > 30:
-                total -= min(15.0, pct - 30.0)
-            elif pct < 15:
-                total -= min(10.0, 15.0 - pct)
-    except (TypeError, ValueError):
-        pass
+        portfolio_cash = summary.get("cash_percentage")
+    pct = _coerce_float(portfolio_cash)
+    if pct is not None:
+        if pct > 30:
+            total -= min(15.0, pct - 30.0)
+        elif pct < 15:
+            total -= min(10.0, 15.0 - pct)
     return max(total, 0.0)
 
 

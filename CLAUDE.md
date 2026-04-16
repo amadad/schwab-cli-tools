@@ -93,9 +93,10 @@ response envelope. For the full historical snapshot/query contract, use
 being silently dropped. When the full context is too large, use
 `schwab context --json --output <path>` to export it and return a compact pointer.
 
-Experimental recommendation-learning work now lives in the separate,
+Experimental recommendation-engine work now lives in the separate,
 opt-in `schwab-advisor` CLI; see `docs/advisor-sidecar.md`. Keep the main
-`schwab` CLI and canonical history flow stable while iterating on the sidecar.
+`schwab` CLI and canonical history flow stable while iterating on the
+operationally isolated recommendation engine.
 
 The morning portfolio brief now has a first-class repo-native flow under
 `schwab brief ...`. Nightly build state and delivery history live in the canonical
@@ -137,7 +138,7 @@ history DB as `brief_runs` / `brief_deliveries`.
 
 Default account: set `SCHWAB_DEFAULT_ACCOUNT` to omit `ACCOUNT` for buy/sell/orders.
 
-### Advisor sidecar
+### Recommendation engine (`schwab-advisor`)
 
 Use `uv run schwab-advisor <command>` for the experimental recommendation journal:
 
@@ -150,9 +151,10 @@ uv run schwab-advisor evaluate --json
 uv run schwab-advisor review 12 --json
 ```
 
-The sidecar writes only to its own DB (`./private/advisor/advisor.db` by default),
-stores snapshot-backed recommendation provenance, and evaluates against later
-snapshots without modifying the canonical history store.
+The recommendation engine writes only to its own DB (`./private/advisor/advisor.db`
+by default), stores snapshot-backed recommendation provenance, and evaluates against
+later snapshots without modifying the canonical history store. Internally,
+recommendation generation now uses `PortfolioContext` as its decision-context contract.
 
 ### Portfolio brief flow
 
@@ -227,7 +229,7 @@ For clawdbot/automation: Use `--dry-run` for previews. Never use `--live` or set
 
 ```
 src/schwab_client/
-├── advisor_cli.py          # Optional schwab-advisor entrypoint
+├── advisor_cli.py          # Optional schwab-advisor recommendation-engine entrypoint
 ├── runtime_env.py          # Explicit runtime-only secret/env loading
 ├── cli/                    # CLI package (modular)
 │   ├── __init__.py         # Entry point, argparse, routing
@@ -242,8 +244,9 @@ src/schwab_client/
 │       ├── context_cmd.py  # context prompt / memo assembly
 │       ├── brief_cmd.py    # brief nightly/send/status/show
 │       └── report.py       # report, snapshot
-├── _advisor/               # Advisor sidecar schema + store
+├── _advisor/               # Recommendation store schema + persistence
 ├── _client/                # Internal client mixins / shared helpers
+│   └── protocols.py        # Shared raw Schwab transport protocol
 ├── _history/               # Internal history schema + normalization + store
 ├── auth.py                 # Portfolio API auth + managed token storage
 ├── market_auth.py          # Market API auth + managed token storage
@@ -255,18 +258,21 @@ src/core/                   # Pure business logic plus analysis helpers
 ├── advisor_models.py       # Typed recommendation payloads
 ├── advisor_prompts.py      # Structured recommendation prompts
 ├── advisor_scoring.py      # Deterministic outcome scoring
-├── advisor_sidecar.py      # Sidecar orchestration
-├── portfolio_service.py    # Portfolio aggregation
-├── market_service.py       # Market data processing
+├── advisor_sidecar.py      # Recommendation-engine orchestration (legacy filename)
 ├── brief_analysis.py       # Brief narrative analysis + fallback
 ├── brief_render.py         # Brief HTML/text rendering + delivery helper
 ├── brief_scorecard.py      # Deterministic bucket scorecard
 ├── brief_service.py        # End-to-end brief orchestration
-├── snapshot_service.py     # Manual-account merge + snapshot helpers
+├── brief_types.py          # Shared brief-pipeline types
 ├── context.py              # Portfolio context assembly
+├── context_models.py       # Context-only helper models
+├── json_types.py           # Shared JSON aliases/helpers
+├── market_service.py       # Market data processing
 ├── policy.py               # Policy evaluation and pacing alerts
 ├── polymarket.py           # Macro probability signal fetch/normalization
+├── portfolio_service.py    # Portfolio aggregation
 ├── prompts.py              # Brief/review/memo templates
+├── snapshot_service.py     # Manual-account merge + snapshot helpers
 └── errors.py               # Custom exceptions
 
 config/
@@ -293,23 +299,35 @@ config/
 5. **Centralized Output**: `output.py` handles JSON envelope, formatters, and error
    handling consistently across all commands.
 
+6. **Shared Payload Boundaries**: `brief_types.py`, `context_models.py`, `json_types.py`,
+   and `_client/protocols.py` hold small reusable types/protocols instead of repeating
+   ad hoc tuple/dict shapes inside orchestrators.
+
+7. **Canonical Decision Context**: the recommendation engine should consume
+   `PortfolioContext` objects internally; only use dict payloads at serialization or
+   CLI boundaries.
+
 ## Testing
 
 ```bash
 # Run all tests
 uv run pytest
 
-# Run with mock clients (no credentials needed)
+# Run unit tests only
 uv run pytest tests/unit/
 
 # Run specific test
 uv run pytest tests/unit/test_cli.py -v
+
+# Run lint/type/quality gates
+uv run ruff check src tests scripts/check_quality_budget.py
+uv run mypy src tests
+uv run python scripts/check_quality_budget.py --max-any 20 --max-broad-catches 0
 ```
 
-Mock fixtures in `conftest.py`:
-- `mock_schwab_client` - mocked portfolio client
-- `mock_market_client` - mocked market client
-- `reset_cli_context` - reset cached clients between tests
+`tests/conftest.py` now provides lightweight CLI helpers (`run_cli()`, `CLIResult`, and
+`validate_envelope()`) for JSON-envelope assertions. Patch command dependencies inside
+individual test modules when you need mocked clients.
 
 ## Critical Rules
 

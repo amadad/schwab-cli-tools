@@ -19,12 +19,12 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 from dotenv import load_dotenv
 from schwab import auth
 
 from src.core.errors import ConfigError
+from src.core.json_types import JsonObject
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ TOKEN_PATH_ENV = "SCHWAB_TOKEN_PATH"
 TOKEN_DB_FILENAME = "tokens.db"
 TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 6.5
 TOKEN_LOCK_TIMEOUT_SECONDS = 60.0
+AUTH_RECOVERY_ERRORS = (ConfigError, OSError, sqlite3.Error, ValueError, TypeError, RuntimeError)
 
 
 def resolve_data_dir() -> Path:
@@ -64,10 +65,9 @@ def resolve_token_db_path(token_path: str | Path | None = None) -> Path:
 
 # Default token locations
 DEFAULT_TOKEN_PATH = resolve_token_path()
-DEFAULT_TOKEN_DB_PATH = resolve_token_db_path(DEFAULT_TOKEN_PATH)
 
 
-def _parse_datetime_like(value: Any) -> datetime | None:
+def _parse_datetime_like(value: object) -> datetime | None:
     """Parse Schwab token timestamps stored as unix seconds or ISO strings."""
     if value is None:
         return None
@@ -79,7 +79,7 @@ def _parse_datetime_like(value: Any) -> datetime | None:
         return None
 
 
-def _derive_token_window(tokens: dict[str, Any]) -> tuple[datetime, datetime] | None:
+def _derive_token_window(tokens: JsonObject) -> tuple[datetime, datetime] | None:
     """Return token creation and effective-expiry timestamps when available."""
     creation_time = _parse_datetime_like(tokens.get("creation_timestamp"))
     token_data = tokens.get("token", {})
@@ -88,7 +88,9 @@ def _derive_token_window(tokens: dict[str, Any]) -> tuple[datetime, datetime] | 
 
     if access_expiry is not None:
         created = creation_time or (access_expiry - timedelta(minutes=30))
-        has_refresh_token = bool(token_data.get("refresh_token")) if isinstance(token_data, dict) else False
+        has_refresh_token = (
+            bool(token_data.get("refresh_token")) if isinstance(token_data, dict) else False
+        )
         effective_expiry = created + timedelta(days=7) if has_refresh_token else access_expiry
         return created, effective_expiry
 
@@ -106,7 +108,7 @@ def _build_token_info(
     warning: str | None = None,
     warning_level: str | None = None,
     cached: bool = False,
-) -> dict[str, Any]:
+) -> JsonObject:
     """Build the standard token info payload from a token window."""
     now = datetime.now()
     time_remaining = expires - now
@@ -163,7 +165,7 @@ class TokenManager:
 
     def _connect(self, *, timeout: float = TOKEN_LOCK_TIMEOUT_SECONDS) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=timeout, isolation_level=None)
-        conn.row_factory = sqlite3.Row
+        setattr(conn, "row_factory", sqlite3.Row)  # noqa: B010
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
@@ -194,7 +196,7 @@ class TokenManager:
             conn.execute("BEGIN EXCLUSIVE")
             yield conn
             conn.commit()
-        except Exception:
+        except BaseException:
             conn.rollback()
             raise
         finally:
@@ -204,7 +206,7 @@ class TokenManager:
         """Check if the token file exists."""
         return self.token_path.exists()
 
-    def load_tokens(self) -> dict[str, Any] | None:
+    def load_tokens(self) -> JsonObject | None:
         """Load tokens from the token JSON file."""
         if not self.tokens_exist():
             return None
@@ -215,14 +217,14 @@ class TokenManager:
             logger.error("Failed to load tokens from %s: %s", self.token_path, exc)
             return None
 
-    def _write_token_file(self, tokens: dict[str, Any]) -> None:
+    def _write_token_file(self, tokens: JsonObject) -> None:
         temp_path = self.token_path.with_suffix(f"{self.token_path.suffix}.tmp")
         temp_path.write_text(json.dumps(tokens))
         temp_path.replace(self.token_path)
 
     def _upsert_state(
         self,
-        tokens: dict[str, Any],
+        tokens: JsonObject,
         *,
         conn: sqlite3.Connection | None = None,
     ) -> None:
@@ -281,7 +283,7 @@ class TokenManager:
                 (str(self.token_path),),
             ).fetchone()
 
-    def sync_state_from_file(self, *, conn: sqlite3.Connection | None = None) -> dict[str, Any] | None:
+    def sync_state_from_file(self, *, conn: sqlite3.Connection | None = None) -> JsonObject | None:
         """Sync the sidecar DB from the token file and return the loaded token."""
         tokens = self.load_tokens()
         if tokens is None:
@@ -289,7 +291,7 @@ class TokenManager:
         self._upsert_state(tokens, conn=conn)
         return tokens
 
-    def read_token_object(self) -> dict[str, Any]:
+    def read_token_object(self) -> JsonObject:
         """Read a token object for ``client_from_access_functions`` safely."""
         with self.auth_lock() as conn:
             tokens = self.load_tokens()
@@ -298,14 +300,14 @@ class TokenManager:
             self._upsert_state(tokens, conn=conn)
             return tokens
 
-    def write_token_object(self, tokens: dict[str, Any], *args: Any, **kwargs: Any) -> None:
+    def write_token_object(self, tokens: JsonObject, *args: object, **kwargs: object) -> None:
         """Write a refreshed token object atomically and sync the sidecar DB."""
         del args, kwargs
         with self.auth_lock() as conn:
             self._write_token_file(tokens)
             self._upsert_state(tokens, conn=conn)
 
-    def get_token_info(self) -> dict[str, Any]:
+    def get_token_info(self) -> JsonObject:
         """Get current token status, using cached metadata when needed."""
         if not self.tokens_exist():
             return {
@@ -352,7 +354,7 @@ class TokenManager:
             "db_path": str(self.db_path),
         }
 
-    def get_storage_info(self) -> dict[str, Any]:
+    def get_storage_info(self) -> JsonObject:
         """Describe the local token persistence strategy for diagnostics."""
         return {
             "token_path": str(self.token_path),
@@ -417,7 +419,7 @@ def _get_or_create_locked_client(
                 logger.info("Token too old, proactively re-authenticating")
                 manager.delete_tokens()
                 client = None
-        except Exception as exc:
+        except AUTH_RECOVERY_ERRORS as exc:
             logger.warning("Failed to load managed token state, re-authenticating: %s", exc)
             manager.delete_tokens()
             client = None
@@ -466,19 +468,15 @@ def get_authenticated_client(
 
     Path(token_path).parent.mkdir(parents=True, exist_ok=True)
 
-    try:
-        client = _get_or_create_locked_client(
-            api_key=api_key,
-            app_secret=app_secret,
-            callback_url=callback_url,
-            token_path=Path(token_path),
-            asyncio=asyncio,
-        )
-        logger.info("Schwab client authenticated successfully")
-        return client
-    except Exception as exc:
-        logger.error("Authentication failed: %s", exc)
-        raise
+    client = _get_or_create_locked_client(
+        api_key=api_key,
+        app_secret=app_secret,
+        callback_url=callback_url,
+        token_path=Path(token_path),
+        asyncio=asyncio,
+    )
+    logger.info("Schwab client authenticated successfully")
+    return client
 
 
 def authenticate_interactive(
@@ -603,7 +601,7 @@ def main():
         else:
             print(f"Warning: API test returned {response.status_code}")
 
-    except Exception as exc:
+    except AUTH_RECOVERY_ERRORS as exc:
         print(f"Authentication failed: {exc}")
         return 1
 

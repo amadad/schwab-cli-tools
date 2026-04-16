@@ -7,7 +7,9 @@ import os
 import urllib.error
 import urllib.request
 from datetime import datetime
-from typing import Any
+
+from src.core.brief_types import JsonDict
+from src.core.json_types import JsonObject
 
 
 def _split_csv_env(name: str, default: list[str]) -> list[str]:
@@ -17,7 +19,7 @@ def _split_csv_env(name: str, default: list[str]) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def email_settings() -> dict[str, Any]:
+def email_settings() -> JsonObject:
     return {
         "from": os.environ.get("PORTFOLIO_BRIEF_EMAIL_FROM", "agent@orb.scty.org"),
         "to": _split_csv_env("PORTFOLIO_BRIEF_EMAIL_TO", ["amadad@gmail.com"]),
@@ -52,16 +54,16 @@ def brief_subject(date_str: str, primary_alert: str, one_thing: str) -> str:
 def build_briefing(
     *,
     brief_date: str,
-    analysis: dict[str, Any],
-    scorecard: dict[str, Any],
-    context_signals: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+    analysis: JsonObject,
+    scorecard: JsonObject,
+    context_signals: JsonObject | None = None,
+) -> JsonObject:
     primary_alert = analysis.get("primary_alert") or "None"
     summary = analysis.get("summary") or "Portfolio check complete."
     one_thing = analysis.get("one_thing") or "No action needed today."
     context_signals = context_signals or {}
 
-    alerts = []
+    alerts: list[JsonDict] = []
     for alert in scorecard.get("alerts", [])[:4]:
         alerts.append(
             {
@@ -88,7 +90,7 @@ def build_briefing(
             if len(alerts) >= 4:
                 break
 
-    what_changed = []
+    what_changed: list[str] = []
     for item in analysis.get("bucket_narrative", []):
         status = item.get("status", "on_track")
         if status == "on_track":
@@ -103,7 +105,7 @@ def build_briefing(
     if not what_changed:
         what_changed = ["No material changes from policy posture."]
 
-    top_actions = []
+    top_actions: list[JsonDict] = []
     for rec in analysis.get("recommendations", [])[:4]:
         top_actions.append(
             {
@@ -143,7 +145,7 @@ def build_briefing(
     }
 
 
-def _build_advisor_section_html(advisor: dict[str, Any] | None) -> str:
+def _build_advisor_section_html(advisor: JsonObject | None) -> str:
     if not advisor:
         return ""
     confidence = advisor.get("confidence")
@@ -168,12 +170,16 @@ def _build_advisor_section_html(advisor: dict[str, Any] | None) -> str:
         '<p style="font-size:11px;font-weight:600;color:#7c3aed;letter-spacing:1px;text-transform:uppercase;margin:24px 0 12px 0">Advisor Call</p>'
         + f"<p style='font-size:15px;line-height:1.6;color:#111827;margin:0 0 8px 0'><strong>{advisor.get('thesis','')}</strong></p>"
         + f"<p style='font-size:13px;color:#6b7280;margin:0 0 10px 0'>{' • '.join(meta)}</p>"
-        + (f"<p style='font-size:14px;line-height:1.7;color:#3a3a3a;margin:0'>{rationale}</p>" if rationale else "")
+        + (
+            f"<p style='font-size:14px;line-height:1.7;color:#3a3a3a;margin:0'>{rationale}</p>"
+            if rationale
+            else ""
+        )
         + tags_html
     )
 
 
-def _build_advisor_section_text(advisor: dict[str, Any] | None) -> list[str]:
+def _build_advisor_section_text(advisor: JsonObject | None) -> list[str]:
     if not advisor:
         return []
     confidence = advisor.get("confidence")
@@ -188,13 +194,13 @@ def _build_advisor_section_text(advisor: dict[str, Any] | None) -> list[str]:
     return lines
 
 
-def _format_signed_percent(value: Any) -> str:
+def _format_signed_percent(value: object) -> str:
     if not isinstance(value, int | float):
         return "—"
     return f"{value:+.1f}%"
 
 
-def _build_bucket_strip_html(scorecard: dict[str, Any]) -> str:
+def _build_bucket_strip_html(scorecard: JsonObject) -> str:
     rows = scorecard.get("buckets", [])
     if not rows:
         return ""
@@ -203,12 +209,19 @@ def _build_bucket_strip_html(scorecard: dict[str, Any]) -> str:
         "Inherited IRAs": ["Inherited IRA (Dad)", "Inherited IRA (Mom)", "Inherited Roth (Mom)"],
         "Retirement": ["Trad IRA (Ali)", "Roth (Ali)", "Roth (Syra)"],
         "Taxable": ["Trading", "Index", "Business"],
-        "Education": ["Education (Ammar)", "Education (Hasan)", "Education (Laila)", "Education (Noora)"],
+        "Education": [
+            "Education (Ammar)",
+            "Education (Hasan)",
+            "Education (Laila)",
+            "Education (Noora)",
+        ],
         "Other": ["Cash / Bank", "DAF"],
     }
     bucket_map = {bucket["bucket"]: bucket for bucket in rows}
     groups["⚠️ Needs Attention"] = [
-        bucket["bucket"] for bucket in rows if bucket.get("status") in ("urgent", "warning", "attention")
+        bucket["bucket"]
+        for bucket in rows
+        if bucket.get("status") in ("urgent", "warning", "attention")
     ]
 
     td = "padding:5px 8px;font-size:13px;color:#374151;border-bottom:1px solid #f0ebff"
@@ -223,12 +236,20 @@ def _build_bucket_strip_html(scorecard: dict[str, Any]) -> str:
         html += f'<tr><td colspan="4" style="padding:8px 8px 2px;font-size:10px;font-weight:700;color:#9ca3af;letter-spacing:1px;text-transform:uppercase;border-top:1px solid #f0ebff">{group_name}</td></tr>'
         for bucket in buckets_in_group:
             status = bucket.get("status", "on_track")
-            dot = "🔴" if status == "urgent" else "🟡" if status in ("warning", "attention") else "🟢"
-            name_color = "#dc2626" if status == "urgent" else "#d97706" if status in ("warning", "attention") else "#111827"
+            dot = (
+                "🔴" if status == "urgent" else "🟡" if status in ("warning", "attention") else "🟢"
+            )
+            name_color = (
+                "#dc2626"
+                if status == "urgent"
+                else "#d97706" if status in ("warning", "attention") else "#111827"
+            )
             cash_pct = bucket.get("cash_pct", 0)
             cash_color = "#dc2626" if cash_pct > 40 else "#d97706" if cash_pct > 20 else "#6b7280"
             wow_pct = bucket.get("wow_pct")
-            wow_color = "#059669" if isinstance(wow_pct, int | float) and wow_pct >= 0 else "#dc2626"
+            wow_color = (
+                "#059669" if isinstance(wow_pct, int | float) and wow_pct >= 0 else "#dc2626"
+            )
             value = bucket.get("value") or 0
             html += (
                 f'<tr><td style="{td}"><span style="color:{name_color}">{dot} {bucket["bucket"]}</span></td>'
@@ -240,35 +261,39 @@ def _build_bucket_strip_html(scorecard: dict[str, Any]) -> str:
     return html
 
 
-def _build_context_strip_html(context_signals: dict[str, Any]) -> str:
-    parts = []
+def _build_context_strip_html(context_signals: JsonObject) -> str:
+    parts: list[str] = []
     regime = context_signals.get("regime")
     if regime:
         color = "#059669" if "risk_on" in regime.lower() else "#d97706"
-        parts.append(f"<span style='color:{color};font-weight:600'>{regime.upper().replace('_', ' ')}</span>")
+        parts.append(
+            f"<span style='color:{color};font-weight:600'>{regime.upper().replace('_', ' ')}</span>"
+        )
     for pacing in context_signals.get("distribution_pacing", []):
         pct = pacing.get("pacing_pct", 0)
         color = "#059669" if pacing.get("on_track", True) else "#dc2626"
         parts.append(f"<span style='color:{color}'>{pacing.get('account', '')}: {pct:.0f}%</span>")
     for signal in context_signals.get("polymarket", [])[:1]:
         if signal.get("probability") is not None:
-            parts.append(f"<span style='color:#6b6b6b'>{signal['title']}: {signal['probability'] * 100:.0f}%</span>")
+            parts.append(
+                f"<span style='color:#6b6b6b'>{signal['title']}: {signal['probability'] * 100:.0f}%</span>"
+            )
     if not parts:
         return ""
     return (
         '<p style="font-size:11px;font-weight:600;color:#6b6b6b;letter-spacing:1px;text-transform:uppercase;margin:16px 0 8px 0">Signals</p>'
         + '<p style="font-size:13px;line-height:1.8;margin:0 0 12px 0">'
-        + '  •  '.join(parts)
-        + '</p>'
+        + "  •  ".join(parts)
+        + "</p>"
     )
 
 
 def render_html(
     *,
-    briefing: dict[str, Any],
-    snapshot: dict[str, Any],
-    scorecard: dict[str, Any],
-    advisor: dict[str, Any] | None,
+    briefing: JsonObject,
+    snapshot: JsonObject,
+    scorecard: JsonObject,
+    advisor: JsonObject | None,
 ) -> str:
     portfolio = snapshot.get("portfolio") or {}
     summary = portfolio.get("summary") or {}
@@ -281,9 +306,26 @@ def render_html(
 
     subject = briefing.get("subject", "")
     alert_count = briefing.get("alert_count", len(briefing.get("alerts", [])))
-    has_high_alert = any(alert.get("level") in ("urgent", "warning") for alert in briefing.get("alerts", []))
-    urgency_keywords = ["action", "attention", "penalty", "risk", "deadline", "urgent", "required", "alert"]
-    is_urgent = has_high_alert or alert_count > 0 or any(word in (subject + briefing.get("one_thing", "")).lower() for word in urgency_keywords)
+    has_high_alert = any(
+        alert.get("level") in ("urgent", "warning") for alert in briefing.get("alerts", [])
+    )
+    urgency_keywords = [
+        "action",
+        "attention",
+        "penalty",
+        "risk",
+        "deadline",
+        "urgent",
+        "required",
+        "alert",
+    ]
+    is_urgent = (
+        has_high_alert
+        or alert_count > 0
+        or any(
+            word in (subject + briefing.get("one_thing", "")).lower() for word in urgency_keywords
+        )
+    )
     status = "ATTENTION NEEDED" if is_urgent else "ALL CLEAR"
     status_color = "#dc2626" if is_urgent else "#059669"
 
@@ -295,26 +337,45 @@ def render_html(
         if alert.get("action"):
             alerts_html += f"<p style='font-size:13px;color:#6b6b6b;margin:0 0 8px 8px'>→ {alert['action']}</p>"
     alerts_section = (
-        '<p style="font-size:11px;font-weight:600;color:#dc2626;letter-spacing:1px;text-transform:uppercase;margin:0 0 12px 0">Alerts</p>'
-        + alerts_html
-        + '<div style="height:16px"></div>'
-    ) if alerts_html else ""
+        (
+            '<p style="font-size:11px;font-weight:600;color:#dc2626;letter-spacing:1px;text-transform:uppercase;margin:0 0 12px 0">Alerts</p>'
+            + alerts_html
+            + '<div style="height:16px"></div>'
+        )
+        if alerts_html
+        else ""
+    )
 
-    vix_header = f' <span style="color:#9a9a9a;font-size:13px">— VIX {vix_val}</span>' if isinstance(vix_val, int | float) else ""
-    changes_html = "".join(f"<p style='font-size:14px;line-height:1.7;color:#3a3a3a;margin:0'>• {item}</p>" for item in briefing.get("what_changed", []))
+    vix_header = (
+        f' <span style="color:#9a9a9a;font-size:13px">— VIX {vix_val}</span>'
+        if isinstance(vix_val, int | float)
+        else ""
+    )
+    changes_html = "".join(
+        f"<p style='font-size:14px;line-height:1.7;color:#3a3a3a;margin:0'>• {item}</p>"
+        for item in briefing.get("what_changed", [])
+    )
     top_html = ""
     for index, item in enumerate(briefing.get("top_3", []), start=1):
         top_html += f"<p style='font-size:14px;line-height:1.7;color:#3a3a3a;margin:0'>{index}. {item.get('action','')}</p>"
         if item.get("detail"):
             top_html += f"<p style='font-size:13px;line-height:1.6;color:#9a9a9a;margin:0 0 8px 14px'>{item['detail']}</p>"
 
-    market_note_html = f"<p style='font-size:14px;color:#3a3a3a;margin:16px 0 0 0'>{briefing['market_note']}</p>" if briefing.get("market_note") else ""
+    market_note_html = (
+        f"<p style='font-size:14px;color:#3a3a3a;margin:16px 0 0 0'>{briefing['market_note']}</p>"
+        if briefing.get("market_note")
+        else ""
+    )
     context_strip_html = _build_context_strip_html(briefing.get("context_signals", {}))
     bucket_strip_html = _build_bucket_strip_html(scorecard)
     bucket_status_section = (
-        '<p style="font-size:11px;font-weight:600;color:#7c3aed;letter-spacing:1px;text-transform:uppercase;margin:0 0 12px 0">Bucket Status</p>'
-        + bucket_strip_html
-    ) if bucket_strip_html else ""
+        (
+            '<p style="font-size:11px;font-weight:600;color:#7c3aed;letter-spacing:1px;text-transform:uppercase;margin:0 0 12px 0">Bucket Status</p>'
+            + bucket_strip_html
+        )
+        if bucket_strip_html
+        else ""
+    )
     fallback_note = ""
     if briefing.get("fallback_mode"):
         fallback_note = f"<p style='font-size:12px;color:#9a3412;margin:0 0 16px 0'>Rendered from deterministic fallback: {briefing['fallback_mode']}</p>"
@@ -356,9 +417,9 @@ def render_html(
 
 def render_text(
     *,
-    briefing: dict[str, Any],
-    snapshot: dict[str, Any],
-    advisor: dict[str, Any] | None,
+    briefing: JsonObject,
+    snapshot: JsonObject,
+    advisor: JsonObject | None,
 ) -> str:
     portfolio = snapshot.get("portfolio") or {}
     summary = portfolio.get("summary") or {}
@@ -377,10 +438,16 @@ def render_text(
         *[f"• {item}" for item in briefing.get("what_changed", [])],
         "",
         f"ALERTS ({briefing.get('alert_count', len(briefing.get('alerts', [])))})",
-        *[f"- [{alert.get('level','info').upper()}] {alert.get('bucket','')}: {alert.get('issue','')}" for alert in briefing.get("alerts", [])],
+        *[
+            f"- [{alert.get('level','info').upper()}] {alert.get('bucket','')}: {alert.get('issue','')}"
+            for alert in briefing.get("alerts", [])
+        ],
         "",
         "TOP ACTIONS",
-        *[f"{index}. {item.get('action','')}" for index, item in enumerate(briefing.get("top_3", []), start=1)],
+        *[
+            f"{index}. {item.get('action','')}"
+            for index, item in enumerate(briefing.get("top_3", []), start=1)
+        ],
         "",
         "IF YOU DO ONE THING",
         briefing.get("one_thing", ""),
@@ -396,7 +463,7 @@ def render_text(
     return "\n".join(lines)
 
 
-def send_email(subject: str, html: str, text: str) -> dict[str, Any]:
+def send_email(subject: str, html: str, text: str) -> JsonObject:
     api_key = os.environ.get("RESEND_API_KEY")
     if not api_key:
         return {"error": "No RESEND_API_KEY"}
@@ -424,7 +491,12 @@ def send_email(subject: str, html: str, text: str) -> dict[str, Any]:
             return json.loads(response.read().decode())
     except urllib.error.HTTPError as exc:
         return {"error": f"HTTP {exc.code} {exc.reason}"}
-    except Exception as exc:  # pragma: no cover - network wrapper
+    except (
+        urllib.error.URLError,
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:  # pragma: no cover - network wrapper
         return {"error": str(exc)}
 
 

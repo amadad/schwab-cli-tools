@@ -287,7 +287,9 @@ Examples:
         help="Run the nightly brief build",
         parents=[common_parser],
     )
-    brief_nightly_parser.add_argument("--reuse-snapshot-id", type=int, help="Reuse an existing snapshot id")
+    brief_nightly_parser.add_argument(
+        "--reuse-snapshot-id", type=int, help="Reuse an existing snapshot id"
+    )
     brief_nightly_parser.add_argument("--for-date", help="Override brief date (YYYY-MM-DD)")
 
     brief_send_parser = brief_subparsers.add_parser(
@@ -296,9 +298,13 @@ Examples:
         parents=[common_parser],
     )
     brief_send_parser.add_argument("--run-id", type=int, help="Send a specific brief run")
-    brief_send_parser.add_argument("--for-date", help="Select the latest brief for this date (YYYY-MM-DD)")
+    brief_send_parser.add_argument(
+        "--for-date", help="Select the latest brief for this date (YYYY-MM-DD)"
+    )
     brief_send_parser.add_argument("--dry-run", action="store_true", help="Preview without sending")
-    brief_send_parser.add_argument("--force", action="store_true", help="Send even if already sent or stale")
+    brief_send_parser.add_argument(
+        "--force", action="store_true", help="Send even if already sent or stale"
+    )
 
     brief_status_parser = brief_subparsers.add_parser(
         "status",
@@ -315,7 +321,9 @@ Examples:
     brief_show_parser.add_argument("run_id", type=int)
 
     # Admin commands
-    auth_parser = subparsers.add_parser("auth", help="Check authentication or log in", parents=[common_parser])
+    auth_parser = subparsers.add_parser(
+        "auth", help="Check authentication or log in", parents=[common_parser]
+    )
     auth_parser.add_argument(
         "auth_action",
         nargs="?",
@@ -334,9 +342,15 @@ Examples:
         action="store_true",
         help="Use the market-data auth rail",
     )
-    auth_parser.add_argument("--force", action="store_true", help="Re-authenticate even if a valid token exists")
-    auth_parser.add_argument("--manual", action="store_true", help="Use headless/manual copy-paste auth flow")
-    auth_parser.add_argument("--interactive", action="store_true", help="Require ENTER before opening the browser")
+    auth_parser.add_argument(
+        "--force", action="store_true", help="Re-authenticate even if a valid token exists"
+    )
+    auth_parser.add_argument(
+        "--manual", action="store_true", help="Use headless/manual copy-paste auth flow"
+    )
+    auth_parser.add_argument(
+        "--interactive", action="store_true", help="Require ENTER before opening the browser"
+    )
     auth_parser.add_argument("--browser", help="Browser name for webbrowser (e.g. chrome, firefox)")
     auth_parser.add_argument(
         "--timeout",

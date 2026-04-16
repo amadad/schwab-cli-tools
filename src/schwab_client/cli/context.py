@@ -18,6 +18,8 @@ from ..market_auth import get_market_client
 
 logger = logging.getLogger(__name__)
 
+MARKET_CLIENT_ERRORS = (ConfigError, OSError, RuntimeError, TypeError, ValueError)
+
 # Module-level cached clients (lazy singletons)
 _portfolio_client: SchwabClientWrapper | None = None
 _market_client: Any | None = None
@@ -46,19 +48,12 @@ def get_cached_market_client():
     if _market_client is None:
         try:
             _market_client = get_market_client()
-        except Exception as exc:
+        except MARKET_CLIENT_ERRORS as exc:
             raise ConfigError(
                 f"Market API not configured: {exc}. "
                 "Run 'schwab-market-auth' or set SCHWAB_MARKET_APP_KEY."
             ) from exc
     return _market_client
-
-
-def reset_clients() -> None:
-    """Reset cached clients (for testing)."""
-    global _portfolio_client, _market_client
-    _portfolio_client = None
-    _market_client = None
 
 
 def get_trade_logger() -> logging.Logger:

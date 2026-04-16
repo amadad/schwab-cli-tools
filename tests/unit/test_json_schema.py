@@ -1,23 +1,25 @@
 """Tests for JSON schema validation of CLI output."""
 
+import importlib
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-try:
-    import jsonschema
+from tests.conftest import validate_envelope
 
+jsonschema: Any = None
+try:
+    jsonschema = importlib.import_module("jsonschema")
     HAS_JSONSCHEMA = True
 except ImportError:
     HAS_JSONSCHEMA = False
 
-from tests.conftest import validate_envelope
-
 SCHEMAS_DIR = Path(__file__).parent.parent.parent / "schemas"
 
 
-def load_schema(name: str) -> dict:
+def load_schema(name: str) -> dict[str, Any]:
     """Load a JSON schema from the schemas directory."""
     schema_path = SCHEMAS_DIR / f"{name}.json"
     return json.loads(schema_path.read_text())

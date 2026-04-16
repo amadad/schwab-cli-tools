@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from src.core.brief_scorecard import compute
+import pytest
+
+from src.core.brief_scorecard import build_bucket_policy, compute
+from src.core.errors import ConfigError
 from src.schwab_client.history import HistoryStore
 
 
@@ -50,13 +53,31 @@ def _snapshot(*, observed_at: str, total_value: float, total_cash: float) -> dic
                     ],
                 }
             ],
-            "manual_accounts": {"source_path": None, "last_updated": None, "summary": {}, "accounts": []},
+            "manual_accounts": {
+                "source_path": None,
+                "last_updated": None,
+                "summary": {},
+                "accounts": [],
+            },
             "positions": [],
-            "allocation": {"diversification_score": 90.0, "by_asset_type": {}, "concentration_risks": [], "top_holdings_pct": []},
+            "allocation": {
+                "diversification_score": 90.0,
+                "by_asset_type": {},
+                "concentration_risks": [],
+                "top_holdings_pct": [],
+            },
         },
         "market": None,
         "errors": [],
     }
+
+
+def test_build_bucket_policy_rejects_invalid_json(tmp_path: Path):
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text("{")
+
+    with pytest.raises(ConfigError):
+        build_bucket_policy(policy_path)
 
 
 def test_scorecard_respects_explicit_snapshot_id(tmp_path: Path):

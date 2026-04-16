@@ -1,10 +1,15 @@
-# Advisor Sidecar Plan
+# Recommendation Engine Plan
 
 Status: implemented, experimental
 
-This document defines the **sidecar recommendation-learning system** for `cli-schwab`.
-It is intentionally designed to sit **next to** the existing CLI, snapshot, context,
-and history workflows without disrupting them.
+This document defines the **recommendation engine** for `cli-schwab`.
+The file path remains `docs/advisor-sidecar.md` for continuity, but the architecture
+is better understood as a recommendation/evaluation layer built downstream of the
+portfolio rail, market rail, canonical state, and decision-signal pipeline.
+
+Operationally, the engine still runs through the separate `schwab-advisor` CLI and its
+own SQLite store so experimentation stays isolated from the main `schwab` CLI/history
+contract.
 
 ## Current status
 
@@ -12,6 +17,8 @@ Implemented today:
 
 - separate `schwab-advisor` entrypoint
 - dedicated SQLite store at `./private/advisor/advisor.db`
+- in-process snapshot/context/history capture from the canonical services (no `uv run schwab ...` shell-out for snapshot/context/history reads)
+- `PortfolioContext` is now the internal decision-context contract for recommendation generation
 - structured recommendation capture with raw prompt/response artifacts
 - operator feedback and freeform notes
 - deterministic policy-health evaluation against later snapshots
@@ -22,20 +29,41 @@ Still intentionally unfinished:
 
 - aggregate learning views / leaderboards
 - retrospective narrative generation
-- prompt optimization or autoresearch on sidecar prompts
+- prompt optimization or autoresearch on recommendation prompts
 
 ## Objective
 
-Build a compounding portfolio learning loop that:
+Build a compounding household-investment learning loop that:
 
-1. reads the current portfolio + market + policy context
-2. generates a structured recommendation
-3. records what was recommended
-4. records whether the operator followed it
-5. evaluates whether the recommendation improved the portfolio situation
-6. learns from accumulated recommendation episodes over time
+1. reads canonical state assembled from the portfolio rail and market rail
+2. applies constraints and signals (policy, pacing, regime, macro, heuristics)
+3. generates a structured recommendation
+4. records what was recommended
+5. records whether the operator followed it
+6. evaluates whether the recommendation improved the portfolio situation
+7. learns from accumulated recommendation episodes over time
 
-## Why a sidecar instead of extending the current CLI first
+## Architecture model
+
+The repo-level model for this engine is:
+
+1. **Portfolio rail** — Schwab portfolio truth: balances, positions, transactions,
+   and account metadata.
+2. **Market rail** — Schwab market truth: quotes, VIX, indices, sectors, price
+   history, options/IV, and market hours.
+3. **Canonical state** — normalized snapshot/context/history artifacts that combine
+   the two rails with local config and manual-account data.
+4. **Constraints** — policy, pacing rules, cash targets, manual-account inclusion,
+   and calendar obligations.
+5. **Signals** — regime, Polymarket, heuristics such as Lynch, and future macro inputs.
+6. **Recommendation engine** — structured recommendation generation from canonical
+   decision context (`PortfolioContext` today).
+7. **Evaluation loop** — feedback, later-snapshot comparison, scoring, and review.
+
+In other words: this is not merely a "sidecar" bolted onto the CLI. It is the
+recommendation and evaluation layer for the broader portfolio-intelligence system.
+
+## Why it is still operationally isolated instead of folded into the main CLI
 
 The existing repo already has stable, valuable workflows for:
 
@@ -48,7 +76,7 @@ The existing repo already has stable, valuable workflows for:
 Those should remain stable.
 
 The recommendation-learning loop is still experimental and should be treated as an
-**opt-in adjunct system** until it proves useful.
+**opt-in, operationally isolated recommendation engine** until it proves useful.
 
 ## Guardrails
 
@@ -58,11 +86,11 @@ V1 guardrails:
 - Do **not** change existing snapshot semantics.
 - Do **not** change existing history semantics.
 - Do **not** move current prompt/policy/context workflows.
-- Do **not** place live trading or order execution in the sidecar.
+- Do **not** place live trading or order execution in the recommendation engine.
 - Do **not** optimize prompts with autoresearch until enough real episodes exist.
 
-The sidecar may **read** from the current repo systems, but should write only to its
-own storage in V1.
+The recommendation engine may **read** from the current repo systems, but should write
+only to its own storage in V1.
 
 ---
 
@@ -85,7 +113,7 @@ This fits the repo better than a generic single-name thesis journal.
 
 ## V1 commands
 
-The sidecar CLI is a separate entrypoint:
+The recommendation engine is currently exposed through a separate CLI entrypoint:
 
 ```bash
 uv run schwab-advisor recommend --json
@@ -98,8 +126,8 @@ uv run schwab-advisor review 12 --json
 
 Current commands: `recommend`, `feedback`, `note`, `evaluate`, `status`, and `review`.
 
-The main `schwab brief nightly` flow now calls the sidecar from the same frozen
-snapshot/context payload used by the morning brief, then records the linked
+The main `schwab brief nightly` flow now calls the recommendation engine from the same
+frozen snapshot/context payload used by the morning brief, then records the linked
 `advisor_run_id` on the brief run. That keeps the brief and recommendation layers
 aligned on one source snapshot while preserving separate storage.
 
@@ -112,22 +140,22 @@ Explicitly out of scope for V1:
 - LLM-generated pattern extraction without real data backing it
 - trade execution
 - replacing the current `context` / `snapshot` / `history` workflows
-- merging sidecar storage into the canonical history DB before the model proves useful
+- merging recommendation storage into the canonical history DB before the model proves useful
 
 ---
 
 # Architecture
 
-## Sidecar CLI
+## Recommendation CLI
 
-The sidecar ships as a separate script entrypoint:
+The recommendation engine currently ships as a separate script entrypoint:
 
 ```toml
 [project.scripts]
 schwab-advisor = "src.schwab_client.advisor_cli:main"
 ```
 
-This keeps the main `schwab` parser untouched.
+This keeps the main `schwab` parser untouched while the engine remains experimental.
 
 ## Current file layout
 
@@ -136,16 +164,16 @@ src/schwab_client/
 ├── advisor_cli.py                # separate CLI entrypoint: schwab-advisor
 ├── _advisor/
 │   ├── __init__.py
-│   ├── schema.py                 # sidecar DB schema
-│   └── store.py                  # persistence/query API
+│   ├── schema.py                 # recommendation-store schema
+│   └── store.py                  # recommendation persistence/query API
 src/core/
-├── advisor_models.py             # sidecar-specific typed models
+├── advisor_models.py             # recommendation payload models
 ├── advisor_prompts.py            # structured recommendation prompts
 ├── advisor_scoring.py            # deterministic outcome scoring
-└── advisor_sidecar.py            # orchestration service
+└── advisor_sidecar.py            # recommendation-engine orchestration (legacy filename)
 
 docs/
-└── advisor-sidecar.md            # this file
+└── advisor-sidecar.md            # this file (legacy filename)
 
 tests/unit/
 ├── test_advisor_store.py
@@ -156,7 +184,7 @@ tests/unit/
 
 ## Read-only inputs from the current system
 
-The sidecar should consume, not replace:
+The recommendation engine should consume, not replace:
 
 - canonical snapshot capture
 - SQLite history data
@@ -179,7 +207,7 @@ Every run should record:
 
 # Storage
 
-## Sidecar database
+## Recommendation database
 
 Use a dedicated DB for V1.
 
@@ -195,7 +223,7 @@ Override with:
 export SCHWAB_ADVISOR_DB_PATH=./private/advisor/advisor.db
 ```
 
-This keeps the experiment isolated from the canonical history store.
+This keeps the recommendation engine isolated from the canonical history store.
 
 ## Tables
 
@@ -311,7 +339,7 @@ This repo is strongest when:
 - prompts interpret deterministic results
 - outputs are structured for later measurement
 
-The sidecar should follow the same pattern.
+The recommendation engine should follow the same pattern.
 
 ## Do not evaluate only on price movement
 
@@ -326,7 +354,7 @@ A recommendation can succeed by:
 
 ## Deterministic score: policy health / portfolio health
 
-Create a compact sidecar scoring module that measures health before and after.
+Create a compact recommendation-evaluation scoring module that measures health before and after.
 
 Suggested components:
 
@@ -396,7 +424,7 @@ This command currently:
 - captures a fresh canonical snapshot via `schwab snapshot --json`
 - layers in context-only inputs such as regime, Polymarket, Lynch, YTD distributions, and recent transactions
 - generates a structured recommendation
-- persists the run plus raw prompt/response artifacts in the sidecar DB
+- persists the run plus raw prompt/response artifacts in the recommendation DB
 
 The stored `baseline_state_json` is rebuilt from the captured source snapshot so the
 recorded baseline matches `source_snapshot_id`.
@@ -436,8 +464,8 @@ uv run schwab-advisor review 12 --json
 - [x] Add `schwab-advisor` CLI entrypoint in `pyproject.toml`
 - [x] Add `src/schwab_client/advisor_cli.py`
 - [x] Add `SCHWAB_ADVISOR_DB_PATH` resolution
-- [x] Add sidecar DB schema in `src/schwab_client/_advisor/schema.py`
-- [x] Add sidecar store in `src/schwab_client/_advisor/store.py`
+- [x] Add recommendation-store DB schema in `src/schwab_client/_advisor/schema.py`
+- [x] Add recommendation store in `src/schwab_client/_advisor/store.py`
 - [x] Add `src/core/advisor_models.py`
 - [x] Add `src/core/advisor_prompts.py`
 - [x] Add `src/core/advisor_sidecar.py`
@@ -458,7 +486,7 @@ uv run schwab-advisor review 12 --json
 ## Current behavior guarantees
 
 - `uv run schwab-advisor --help` works
-- sidecar DB initializes in `./private/advisor/advisor.db`
+- recommendation DB initializes in `./private/advisor/advisor.db`
 - existing `schwab` commands remain unchanged
 - each run stores snapshot provenance and raw model artifacts
 - malformed model JSON is handled safely
@@ -470,7 +498,7 @@ uv run schwab-advisor review 12 --json
 - [ ] Add aggregate queries by action type / regime / tag / bucket
 - [ ] Add richer JSON + text views for recent outcomes and improvement rates
 - [ ] Add narrative retrospectives while keeping deterministic scoring separate
-- [ ] Build eval cases from real sidecar episodes
+- [ ] Build eval cases from real recommendation episodes
 - [ ] Optimize prompts or scoring only after enough real data exists
 
 ---
@@ -492,8 +520,8 @@ uv run schwab-advisor review 12 --json
 
 ## Later
 
-8. build eval cases from real sidecar episodes
-9. optimize the sidecar prompt/scoring config only with grounded data
+8. build eval cases from real recommendation episodes
+9. optimize the recommendation prompt/scoring config only with grounded data
 10. consider broader candidate-generation work only after the loop proves useful
 
 ---
@@ -509,7 +537,7 @@ Reason:
 - fewer accidental changes to stable CLI/history semantics
 - faster experimentation
 
-If the sidecar proves useful, a later migration can fold parts of it into the main history subsystem.
+If the recommendation engine proves useful, a later migration can fold parts of it into the main history subsystem.
 
 ## Store both structured and raw artifacts
 
@@ -544,7 +572,7 @@ That makes learning ambiguous.
 
 # Future migration criteria
 
-Only consider merging sidecar pieces into the main CLI/history flow after:
+Only consider merging recommendation-engine pieces into the main CLI/history flow after:
 
 - repeated successful real-world use
 - stable command semantics
@@ -555,6 +583,44 @@ Until then, keep it isolated.
 
 ---
 
+# Staged alignment plan
+
+## Vocabulary map
+
+- **Recommendation engine** — preferred architecture term for the subsystem currently
+  exposed via `schwab-advisor`
+- **Recommendation store** — preferred term for the separate SQLite DB under
+  `./private/advisor/advisor.db`
+- **Recommendation episode** — the primary unit of recommendation + feedback + evaluation
+- **Operational isolation** — the reason the engine still lives behind a separate CLI/store
+
+## Now
+
+- use **recommendation engine** as the primary architecture term in docs
+- keep `schwab-advisor`, `advisor_cli.py`, `advisor_sidecar.py`, and `_advisor/` as
+  implementation names for continuity
+- describe the current isolation boundary explicitly: separate CLI, separate SQLite store,
+  same canonical snapshot/context inputs
+- consume canonical snapshot/context/history services in-process instead of shelling out to
+  `uv run schwab ...`
+
+## Next
+
+- keep recommendation generation centered on `PortfolioContext` unless a narrower
+  dedicated decision-context model earns its keep
+- reduce the remaining snapshot + supplemental reconstruction path if a cleaner canonical
+  state handoff emerges
+
+## Later
+
+- rename internal modules/classes only if the churn is worth it after the model stabilizes
+- decide whether `_advisor/` should remain a historical implementation path or become a
+  more neutral recommendation/evaluation package
+- revisit whether the recommendation store still needs to be separate once the workflow is
+  proven and stable
+
+---
+
 # Remaining build order
 
 From the current implementation, the next useful sequence is:
@@ -562,5 +628,5 @@ From the current implementation, the next useful sequence is:
 1. Add aggregate insight queries and summary views
 2. Add richer outcome metrics beyond policy-health deltas
 3. Add narrative retrospectives that clearly separate facts from interpretation
-4. Build eval cases from real sidecar episodes
+4. Build eval cases from real recommendation episodes
 5. Optimize prompts or scoring only after enough grounded data exists

@@ -10,7 +10,7 @@ from schwab.client.base import BaseClient  # for Movers enum
 
 from config.secure_account_config import secure_config
 from src.core.errors import PortfolioError
-from src.core.lynch_service import analyze_holdings_lynch
+from src.core.lynch_service import HoldingInput, analyze_holdings_lynch
 from src.core.market_service import (
     get_implied_volatility,
     get_market_hours,
@@ -536,7 +536,7 @@ def cmd_lynch(*, output_mode: str = "text") -> None:
             fund["lastPrice"] = inst.get("lastPrice", 0)
             fund_by_symbol[sym] = fund
 
-        holdings_data = []
+        holdings_data: list[HoldingInput] = []
         for pos in top_positions:
             sym = pos["symbol"]
             holdings_data.append(
@@ -600,7 +600,7 @@ def cmd_score(symbol: str, *, output_mode: str = "text") -> None:
         result = score_from_fundamentals(symbol.upper(), fund)
 
         if output_mode == "json":
-            print_json_response(command, data=result)
+            print_json_response(command, data=dict(result))
             return
 
         signal = result["signal"]

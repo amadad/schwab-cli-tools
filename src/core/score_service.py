@@ -1,46 +1,64 @@
 """Compounding Quality 15-point stock scoring framework."""
 
-from __future__ import annotations
+from typing import TypedDict
 
-from typing import Any
+ScoreEntry = TypedDict(  # noqa: UP013
+    "ScoreEntry",
+    {
+        "score": int | None,
+        "note": str,
+    },
+)
 
-# 15 dimensions, scored 1-5. Max score = 75.
-# PASS >= 60, WATCH 45-59, SELL < 45
-DIMENSIONS = [
-    "business_model",
-    "management",
-    "competitive_advantage",
-    "industry_attractiveness",
-    "main_risks",
-    "balance_sheet",
-    "capital_intensity",
-    "capital_allocation",
-    "profitability",
-    "historical_growth",
-    "stock_based_compensation",
-    "outlook",
-    "valuation",
-    "owners_earnings",
-    "historical_value_creation",
-]
+ScorePayload = TypedDict(  # noqa: UP013
+    "ScorePayload",
+    {
+        "symbol": str,
+        "dimensions": dict[str, ScoreEntry],
+        "quantitative_total": int,
+        "quantitative_max": int,
+        "scored_count": int,
+        "unscored_count": int,
+        "projected_total": int,
+        "signal": str,
+    },
+)
 
 
-def score_from_fundamentals(symbol: str, fundamentals: dict[str, Any]) -> dict[str, Any]:
+def _as_float(value: object) -> float:
+    if isinstance(value, bool) or value is None:
+        return 0.0
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def _entry_score(entry: ScoreEntry) -> int | None:
+    score = entry.get("score")
+    return score if isinstance(score, int) else None
+
+
+def score_from_fundamentals(symbol: str, fundamentals: dict[str, object]) -> ScorePayload:
     """Score a stock on quantifiable dimensions using fundamentals data.
 
     Returns scored dimensions with values 1-5, and marks qualitative ones
     as requiring manual review (score=None).
     """
-    scores: dict[str, dict[str, Any]] = {}
+    scores: dict[str, ScoreEntry] = {}
 
-    pe = fundamentals.get("peRatio") or 0
-    eps_growth_5y = fundamentals.get("epsTTMGrowthRate5Y") or 0
-    rev_growth_5y = fundamentals.get("revenueGrowthRate5Y") or 0
-    profit_margin = fundamentals.get("netProfitMarginTTM") or 0
-    roe = fundamentals.get("returnOnEquity") or 0
-    roic = fundamentals.get("returnOnInvestment") or 0
-    div_yield = fundamentals.get("dividendYield") or 0
-    debt_equity = fundamentals.get("totalDebtToEquity") or 0
+    pe = _as_float(fundamentals.get("peRatio"))
+    eps_growth_5y = _as_float(fundamentals.get("epsTTMGrowthRate5Y"))
+    rev_growth_5y = _as_float(fundamentals.get("revenueGrowthRate5Y"))
+    profit_margin = _as_float(fundamentals.get("netProfitMarginTTM"))
+    roe = _as_float(fundamentals.get("returnOnEquity"))
+    roic = _as_float(fundamentals.get("returnOnInvestment"))
+    div_yield = _as_float(fundamentals.get("dividendYield"))
+    debt_equity = _as_float(fundamentals.get("totalDebtToEquity"))
 
     # Qualitative dimensions — need manual review
     for dim in [
@@ -181,10 +199,10 @@ def score_from_fundamentals(symbol: str, fundamentals: dict[str, Any]) -> dict[s
     scores["historical_value_creation"] = {"score": hvc_score, "note": f"ROE: {roe:.1f}%"}
 
     # Calculate totals
-    scored_dims = {k: v for k, v in scores.items() if v["score"] is not None}
-    unscored_dims = {k: v for k, v in scores.items() if v["score"] is None}
+    scored_dims = {k: v for k, v in scores.items() if _entry_score(v) is not None}
+    unscored_dims = {k: v for k, v in scores.items() if _entry_score(v) is None}
 
-    quantitative_total = sum(v["score"] for v in scored_dims.values())
+    quantitative_total = sum(_entry_score(v) or 0 for v in scored_dims.values())
     quantitative_max = len(scored_dims) * 5
 
     # Project full score assuming unscored dimensions average same ratio

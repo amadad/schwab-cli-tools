@@ -1,5 +1,23 @@
 # Solutions Log
 
+## 2026-04-16 — Recommendation generation still accepted loose JSON blobs instead of canonical state objects
+
+- **Symptom:** even after snapshot/context/history capture moved in-process, recommendation generation still flowed through ad hoc context dicts, which left the engine’s main input contract fuzzy and kept `recommend_from_context(...)` anchored to serialized payload shape instead of the canonical state object.
+- **Fix:** made `PortfolioContext` the internal decision-context contract for the recommendation engine: `src/core/advisor_sidecar.py` now exposes `recommend_from_decision_context(...)`, derives provenance/novelty/why-now metadata from the typed context object, rebuilds evaluation contexts as `PortfolioContext`, and keeps the older dict entrypoint only as a thin compatibility wrapper. `src/core/advisor_scoring.py` now also accepts `PortfolioContext` directly.
+- **Follow-up:** only introduce a narrower dedicated decision-context model if recommendation needs truly diverge from `PortfolioContext`; until then, prefer tightening around the existing canonical state object instead of adding another parallel payload shape.
+
+## 2026-04-16 — Recommendation capture still depended on shelling back through the CLI
+
+- **Symptom:** `src/core/advisor_sidecar.py` still called `uv run schwab snapshot`, `uv run schwab context`, and `uv run schwab history --snapshot-id ...` through `subprocess`, which kept the recommendation engine coupled to CLI presentation boundaries even after the architecture had been reframed around canonical state.
+- **Fix:** switched recommendation orchestration to reuse the in-process snapshot/context/history services directly: live snapshot capture now uses `collect_snapshot(...)` + `HistoryStore.store_snapshot(...)`, snapshot reuse now reads through `HistoryStore.get_snapshot_payload(...)`, context capture now uses `PortfolioContext.assemble(...)`, and baseline symbol prices now come from the quote client instead of the `fundamentals` CLI command. Added unit coverage to prove recommendation capture, snapshot reuse, context capture, and baseline-price lookup no longer need CLI subprocesses.
+- **Follow-up:** the next architecture-tightening step is to define one explicit decision-context input contract so recommendation generation can depend on canonical state objects directly rather than rebuilding context from mixed snapshot + supplemental payloads.
+
+## 2026-04-16 — Code-quality drift had started to outpace the repo's internal guardrails
+
+- **Symptom:** shared payload shapes were spreading as ad hoc dicts/tuples, broad exception handlers kept accumulating around orchestration code, dead helpers lingered after refactors, and CI only checked `ruff` + `pytest`, so type-safety and cleanup regressions could sneak back in.
+- **Fix:** consolidated reusable types into `src/core/brief_types.py`, `src/core/context_models.py`, `src/core/json_types.py`, and `src/schwab_client/_client/protocols.py`; removed verified-dead helpers; narrowed broad catches to explicit boundary errors; and added `scripts/check_quality_budget.py` plus CI gates for `ruff`, `mypy`, `pytest`, `Any <= 20`, and zero broad `except Exception` handlers.
+- **Follow-up:** when new shared payload shapes appear, add them to the dedicated type/helper modules instead of copying inline dict contracts, and treat the quality-budget script as the regression tripwire rather than weakening it with broad ignores.
+
 ## 2026-04-15 — Dedicated market OAuth app could fail headless auth even while portfolio auth still worked
 
 - **Symptom:** `schwab auth login --market --manual` could die at the Schwab authorize step with `invalid_client` / `Unauthorized`, while portfolio auth still worked and the market token remained missing.

@@ -7,8 +7,8 @@ import os
 import shlex
 import subprocess
 from datetime import datetime
-from typing import Any
 
+from src.core.brief_types import JsonDict, ModelRunResult, PortfolioContextLike
 from src.core.context import PortfolioContext
 from src.core.policy import resolve_policy_path
 from src.schwab_client.history import HistoryStore
@@ -34,24 +34,24 @@ RMD Rules:
 """.strip()
 
 
-def snapshot_date_from_snapshot(snapshot: dict[str, Any]) -> str:
+def snapshot_date_from_snapshot(snapshot: JsonDict) -> str:
     generated_at = snapshot.get("generated_at")
     if isinstance(generated_at, str) and len(generated_at) >= 10:
         return generated_at[:10]
     return datetime.now().strftime("%Y-%m-%d")
 
 
-def load_portfolio_history(history_store: HistoryStore, *, limit: int = 7) -> list[dict[str, Any]]:
+def load_portfolio_history(history_store: HistoryStore, *, limit: int = 7) -> list[JsonDict]:
     return history_store.get_portfolio_history(limit=limit)
 
 
-def _context_to_dict(context: PortfolioContext | dict[str, Any] | None) -> dict[str, Any]:
+def _context_to_dict(context: PortfolioContextLike) -> JsonDict:
     if isinstance(context, PortfolioContext):
         return context.to_dict()
     return dict(context or {})
 
 
-def format_context_signals(context: PortfolioContext | dict[str, Any] | None) -> str:
+def format_context_signals(context: PortfolioContextLike) -> str:
     payload = _context_to_dict(context)
     if not payload:
         return "  (context unavailable)"
@@ -59,7 +59,9 @@ def format_context_signals(context: PortfolioContext | dict[str, Any] | None) ->
     lines: list[str] = []
     regime = payload.get("regime") or {}
     if regime:
-        lines.append(f"  Regime: {regime.get('regime', 'unknown').upper()} — {regime.get('description', '')}")
+        lines.append(
+            f"  Regime: {regime.get('regime', 'unknown').upper()} — {regime.get('description', '')}"
+        )
 
     polymarket = payload.get("polymarket") or {}
     for signal in (polymarket.get("signals") or [])[:3]:
@@ -97,27 +99,30 @@ def format_context_signals(context: PortfolioContext | dict[str, Any] | None) ->
 
 def build_prompt(
     *,
-    scorecard: dict[str, Any],
-    snapshot: dict[str, Any],
-    portfolio_history: list[dict[str, Any]],
+    scorecard: JsonDict,
+    snapshot: JsonDict,
+    portfolio_history: list[JsonDict],
     policy_text: str,
-    context: PortfolioContext | dict[str, Any] | None,
+    context: PortfolioContextLike,
 ) -> str:
-    vix = ((snapshot.get("market") or {}).get("vix") or {})
+    vix = (snapshot.get("market") or {}).get("vix") or {}
     vix_val = vix.get("vix") if isinstance(vix, dict) else "N/A"
     vix_signal = vix.get("signal", "") if isinstance(vix, dict) else ""
     total = scorecard.get("total_portfolio_value", 0)
 
-    history_text = "\n".join(
-        f"  {(row.get('observed_at') or '')[:10]}: ${(row.get('total_value') or 0):,.0f}  cash {(row.get('cash_percentage') or 0):.1f}%"
-        for row in portfolio_history
-    ) or "  No history yet."
+    history_text = (
+        "\n".join(
+            f"  {(row.get('observed_at') or '')[:10]}: ${(row.get('total_value') or 0):,.0f}  cash {(row.get('cash_percentage') or 0):.1f}%"
+            for row in portfolio_history
+        )
+        or "  No history yet."
+    )
     alerts_text = "".join(
         f"  [{alert['level'].upper()}] {alert['bucket']}: {alert['issue']} → {alert['action']}\n"
         for alert in scorecard.get("alerts", [])
     )
 
-    bucket_lines = []
+    bucket_lines: list[str] = []
     for bucket in scorecard.get("buckets", []):
         dod_pct = bucket.get("dod_pct")
         wow_pct = bucket.get("wow_pct")
@@ -169,8 +174,8 @@ Keep it tight. Exception-based. No stock essays. No market newsletters.
 }}"""
 
 
-def _distribution_pacing_summary(context: dict[str, Any]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
+def _distribution_pacing_summary(context: JsonDict) -> JsonDict:
+    result: JsonDict = {}
     pacing_items = (context.get("policy_delta") or {}).get("distribution_pacing") or []
     for item in pacing_items:
         account = str(item.get("account") or "").lower()
@@ -186,23 +191,25 @@ def _distribution_pacing_summary(context: dict[str, Any]) -> dict[str, Any]:
 
 def build_deterministic_fallback(
     *,
-    snapshot: dict[str, Any],
-    scorecard: dict[str, Any],
-    context: PortfolioContext | dict[str, Any] | None,
+    snapshot: JsonDict,
+    scorecard: JsonDict,
+    context: PortfolioContextLike,
     reason: str,
-) -> dict[str, Any]:
+) -> JsonDict:
     payload = _context_to_dict(context)
     alerts = list(scorecard.get("alerts", []))
     buckets = list(scorecard.get("buckets", []))
     first_alert = alerts[0] if alerts else None
 
-    bucket_narrative = []
+    bucket_narrative: list[JsonDict] = []
     for bucket in buckets:
         status = bucket.get("status") or "on_track"
         if status == "on_track":
             continue
         note = ""
-        matching = next((alert for alert in alerts if alert.get("bucket") == bucket.get("bucket")), None)
+        matching = next(
+            (alert for alert in alerts if alert.get("bucket") == bucket.get("bucket")), None
+        )
         if matching:
             note = matching.get("issue") or ""
         elif isinstance(bucket.get("wow_pct"), int | float):
@@ -218,7 +225,7 @@ def build_deterministic_fallback(
             }
         )
 
-    recommendations = []
+    recommendations: list[JsonDict] = []
     for index, alert in enumerate(alerts[:4], start=1):
         urgency = "today" if alert.get("level") == "urgent" else "this_week"
         recommendations.append(
@@ -256,20 +263,24 @@ def build_deterministic_fallback(
         "bucket_narrative": bucket_narrative[:6],
         "recommendations": recommendations,
         "market_context": {
-            "vix_signal": str(((snapshot.get("market") or {}).get("vix") or {}).get("signal") or ""),
+            "vix_signal": str(
+                ((snapshot.get("market") or {}).get("vix") or {}).get("signal") or ""
+            ),
             "regime": regime or "unknown",
             "polymarket_summary": polymarket_summary,
             "relevance": reason,
         },
         "distribution_pacing": _distribution_pacing_summary(payload),
         "one_thing": one_thing,
-        "leave_alone": [bucket.get("bucket") for bucket in buckets if bucket.get("status") == "on_track"],
+        "leave_alone": [
+            bucket.get("bucket") for bucket in buckets if bucket.get("status") == "on_track"
+        ],
         "parse_error": True,
         "fallback_reason": reason,
     }
 
 
-def _normalize_analysis_payload(payload: dict[str, Any], *, fallback: dict[str, Any]) -> dict[str, Any]:
+def _normalize_analysis_payload(payload: JsonDict, *, fallback: JsonDict) -> JsonDict:
     merged = dict(fallback)
     for key, value in payload.items():
         if value is not None:
@@ -280,35 +291,48 @@ def _normalize_analysis_payload(payload: dict[str, Any], *, fallback: dict[str, 
     return merged
 
 
-def run_model(prompt: str, *, model_command: str | None = None) -> tuple[dict[str, Any] | None, str, str | None, str]:
-    command = model_command or os.environ.get("PORTFOLIO_ANALYSIS_COMMAND", DEFAULT_ANALYSIS_COMMAND)
+def run_model(prompt: str, *, model_command: str | None = None) -> ModelRunResult:
+    command = (
+        model_command or os.environ.get("PORTFOLIO_ANALYSIS_COMMAND") or DEFAULT_ANALYSIS_COMMAND
+    )
     result = subprocess.run(
         shlex.split(command),
         input=prompt,
         capture_output=True,
         text=True,
         timeout=300,
-        env={key: value for key, value in os.environ.items() if key not in {"CLAUDECODE", "CLAUDE_CODE"}},
+        env={
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"CLAUDECODE", "CLAUDE_CODE"}
+        },
     )
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or result.stdout or "").strip()
     if result.returncode != 0:
-        return None, (result.stdout or "").strip(), (result.stderr or result.stdout).strip(), command
+        return ModelRunResult(payload=None, raw_response=stdout, error=stderr, command=command)
 
-    content = result.stdout.strip()
-    candidate = content
-    if not content.startswith("{") and "{" in content:
-        start = content.find("{")
-        end = content.rfind("}") + 1
-        candidate = content[start:end]
+    candidate = stdout
+    if not stdout.startswith("{") and "{" in stdout:
+        start = stdout.find("{")
+        end = stdout.rfind("}") + 1
+        candidate = stdout[start:end]
     try:
-        payload = json.loads(candidate)
+        parsed = json.loads(candidate)
     except json.JSONDecodeError as exc:
-        return None, content, str(exc), command
-    if not isinstance(payload, dict):
-        return None, content, "model did not return a JSON object", command
-    return payload, content, None, command
+        return ModelRunResult(payload=None, raw_response=stdout, error=str(exc), command=command)
+    if not isinstance(parsed, dict):
+        return ModelRunResult(
+            payload=None,
+            raw_response=stdout,
+            error="model did not return a JSON object",
+            command=command,
+        )
+    payload = {str(key): value for key, value in parsed.items()}
+    return ModelRunResult(payload=payload, raw_response=stdout, error=None, command=command)
 
 
-def extract_context_signals(context: PortfolioContext | dict[str, Any] | None) -> dict[str, Any]:
+def extract_context_signals(context: PortfolioContextLike) -> JsonDict:
     payload = _context_to_dict(context)
     if not payload:
         return {}
@@ -332,7 +356,9 @@ def extract_context_signals(context: PortfolioContext | dict[str, Any] | None) -
             "total_checked": lynch.get("total_checked", 0),
             "signals_found": lynch.get("signals_found", 0),
             "flagged_symbols": [
-                item.get("symbol") for item in (lynch.get("flagged") or [])[:5] if item.get("symbol")
+                item.get("symbol")
+                for item in (lynch.get("flagged") or [])[:5]
+                if item.get("symbol")
             ],
         },
         "distribution_pacing": delta.get("distribution_pacing", []),
@@ -350,12 +376,12 @@ def extract_context_signals(context: PortfolioContext | dict[str, Any] | None) -
 
 def analyze_brief(
     *,
-    snapshot: dict[str, Any],
-    scorecard: dict[str, Any],
-    context: PortfolioContext | dict[str, Any] | None,
+    snapshot: JsonDict,
+    scorecard: JsonDict,
+    context: PortfolioContextLike,
     history_store: HistoryStore,
     model_command: str | None = None,
-) -> dict[str, Any]:
+) -> JsonDict:
     policy_path = resolve_policy_path()
     policy_text = policy_path.read_text() if policy_path and policy_path.exists() else ""
     fallback = build_deterministic_fallback(
@@ -371,28 +397,28 @@ def analyze_brief(
         policy_text=policy_text,
         context=context,
     )
-    payload, raw_response, error, resolved_command = run_model(prompt, model_command=model_command)
-    if error or payload is None:
+    model_result = run_model(prompt, model_command=model_command)
+    if model_result.error or model_result.payload is None:
         analysis = dict(fallback)
-        analysis["fallback_reason"] = error or "model call failed"
+        analysis["fallback_reason"] = model_result.error or "model call failed"
         analysis["parse_error"] = True
         return {
             "analysis": analysis,
-            "raw_response": raw_response,
+            "raw_response": model_result.raw_response,
             "fallback_mode": "deterministic",
-            "model_command": resolved_command,
+            "model_command": model_result.command,
             "prompt_version": ANALYSIS_PROMPT_VERSION,
             "context_signals": extract_context_signals(context),
         }
 
-    normalized = _normalize_analysis_payload(payload, fallback=fallback)
+    normalized = _normalize_analysis_payload(model_result.payload, fallback=fallback)
     normalized["parse_error"] = False
     normalized.pop("fallback_reason", None)
     return {
         "analysis": normalized,
-        "raw_response": raw_response,
+        "raw_response": model_result.raw_response,
         "fallback_mode": None,
-        "model_command": resolved_command,
+        "model_command": model_result.command,
         "prompt_version": ANALYSIS_PROMPT_VERSION,
         "context_signals": extract_context_signals(context),
     }

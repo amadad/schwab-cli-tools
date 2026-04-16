@@ -12,12 +12,14 @@ import os
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
 
 from src.core.errors import ConfigError
+from src.core.json_types import JsonObject, as_json_array, as_json_object
 
 POLICY_PATH_ENV_VAR = "SCHWAB_POLICY_PATH"
-DEFAULT_POLICY_TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "config" / "policy.template.json"
+DEFAULT_POLICY_TEMPLATE_PATH = (
+    Path(__file__).resolve().parents[2] / "config" / "policy.template.json"
+)
 DEFAULT_PRIVATE_POLICY_PATH = Path.cwd() / "private" / "policy.json"
 
 
@@ -27,9 +29,6 @@ class BucketPolicy:
 
     name: str
     accounts: list[str]
-    bucket_type: str  # "growth", "depletion", "passive", "education", "business"
-    cash_target_low: float = 0.0  # percentage
-    cash_target_high: float = 100.0  # percentage
     distribution_deadline: date | None = None
     annual_floor: float | None = None  # dollar amount
     years_remaining: int | None = None
@@ -68,7 +67,7 @@ class PolicyAlert:
     target_value: float | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PolicyAlert:
+    def from_dict(cls, data: JsonObject) -> PolicyAlert:
         return cls(
             bucket=str(data.get("bucket") or "unknown"),
             severity=str(data.get("severity") or "info"),
@@ -83,8 +82,8 @@ class PolicyAlert:
             ),
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {
+    def to_dict(self) -> JsonObject:
+        d: JsonObject = {
             "bucket": self.bucket,
             "severity": self.severity,
             "category": self.category,
@@ -112,7 +111,7 @@ class DistributionPacing:
     on_track: bool
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> DistributionPacing:
+    def from_dict(cls, data: JsonObject) -> DistributionPacing:
         return cls(
             account=str(data.get("account") or "unknown"),
             ytd_distributions=float(data.get("ytd_distributions", 0.0) or 0.0),
@@ -123,7 +122,7 @@ class DistributionPacing:
             on_track=bool(data.get("on_track", False)),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> JsonObject:
         return {
             "account": self.account,
             "ytd_distributions": self.ytd_distributions,
@@ -145,7 +144,7 @@ class PolicyDelta:
     checked_at: str = ""
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PolicyDelta:
+    def from_dict(cls, data: JsonObject) -> PolicyDelta:
         return cls(
             alerts=[PolicyAlert.from_dict(alert) for alert in data.get("alerts", [])],
             distribution_pacing=[
@@ -156,7 +155,7 @@ class PolicyDelta:
             checked_at=str(data.get("checked_at") or ""),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> JsonObject:
         return {
             "alerts": [a.to_dict() for a in self.alerts],
             "distribution_pacing": [p.to_dict() for p in self.distribution_pacing],
@@ -182,9 +181,7 @@ class PolicyDelta:
                 f"${pacing.annual_floor:,.0f} ({pacing.pacing_pct:.0f}%) — {status}"
             )
         for alert in self.alerts:
-            icon = {"critical": "[!]", "warning": "[~]", "info": "[-]"}.get(
-                alert.severity, "[-]"
-            )
+            icon = {"critical": "[!]", "warning": "[~]", "info": "[-]"}.get(alert.severity, "[-]")
             lines.append(f"{icon} {alert.bucket}: {alert.message}")
         for calendar_action in self.calendar_actions:
             lines.append(f"[calendar] {calendar_action}")
@@ -198,14 +195,12 @@ def _default_policy_config() -> PolicyConfig:
             BucketPolicy(
                 name="Inherited IRA 1",
                 accounts=["acct_inherited_ira_1"],
-                bucket_type="depletion",
                 distribution_deadline=date(2030, 12, 31),
                 cash_minimum=85_000,
             ),
             BucketPolicy(
                 name="Inherited IRA 2",
                 accounts=["acct_inherited_ira_2"],
-                bucket_type="depletion",
                 distribution_deadline=date(2034, 12, 31),
                 cash_minimum=100_000,
             ),
@@ -262,33 +257,24 @@ def _parse_date(value: str | None) -> date | None:
     return date.fromisoformat(value)
 
 
-def _parse_bucket_policy(data: dict[str, Any]) -> BucketPolicy:
+def _parse_bucket_policy(data: JsonObject) -> BucketPolicy:
     return BucketPolicy(
         name=str(data.get("name") or "Unnamed Bucket"),
-        accounts=[str(account) for account in data.get("accounts", [])],
-        bucket_type=str(data.get("bucket_type") or "unknown"),
-        cash_target_low=float(data.get("cash_target_low", 0.0) or 0.0),
-        cash_target_high=float(data.get("cash_target_high", 100.0) or 100.0),
+        accounts=[str(account) for account in as_json_array(data.get("accounts"))],
         distribution_deadline=_parse_date(data.get("distribution_deadline")),
         annual_floor=(
-            float(data["annual_floor"])
-            if data.get("annual_floor") is not None
-            else None
+            float(data["annual_floor"]) if data.get("annual_floor") is not None else None
         ),
         years_remaining=(
-            int(data["years_remaining"])
-            if data.get("years_remaining") is not None
-            else None
+            int(data["years_remaining"]) if data.get("years_remaining") is not None else None
         ),
         cash_minimum=(
-            float(data["cash_minimum"])
-            if data.get("cash_minimum") is not None
-            else None
+            float(data["cash_minimum"]) if data.get("cash_minimum") is not None else None
         ),
     )
 
 
-def _parse_cash_policies(data: dict[str, Any]) -> dict[str, tuple[float, float]]:
+def _parse_cash_policies(data: JsonObject) -> dict[str, tuple[float, float]]:
     policies: dict[str, tuple[float, float]] = {}
     for account, value in data.items():
         if isinstance(value, dict):
@@ -320,27 +306,33 @@ def load_policy_config(path: str | Path | None = None) -> PolicyConfig:
         return default_config
 
     try:
-        payload = json.loads(resolved_path.read_text())
+        raw_payload = json.loads(resolved_path.read_text())
     except json.JSONDecodeError as exc:
         raise ConfigError(f"Invalid policy JSON in {resolved_path}: {exc}") from exc
     except OSError as exc:
         raise ConfigError(f"Could not read policy file {resolved_path}: {exc}") from exc
 
-    inherited_payload = payload.get("inherited_ira_policies", [])
-    calendar_payload = payload.get("calendar", {})
-    portfolio_cash_target_payload = payload.get("portfolio_cash_target", {})
+    if not isinstance(raw_payload, dict):
+        raise ConfigError(f"Policy file must contain a JSON object: {resolved_path}")
+
+    payload = raw_payload
+    inherited_payload = as_json_array(payload.get("inherited_ira_policies"))
+    calendar_payload = as_json_object(payload.get("calendar"))
+    portfolio_cash_target_payload = payload.get("portfolio_cash_target")
 
     inherited_ira_policies = [
-        _parse_bucket_policy(entry)
-        for entry in inherited_payload
-        if isinstance(entry, dict)
+        _parse_bucket_policy(entry) for entry in inherited_payload if isinstance(entry, dict)
     ]
-    cash_policies = _parse_cash_policies(payload.get("cash_policies", {}))
+    cash_policies = _parse_cash_policies(as_json_object(payload.get("cash_policies")))
 
     if isinstance(portfolio_cash_target_payload, dict):
         portfolio_cash_target = (
-            float(portfolio_cash_target_payload.get("low", default_config.portfolio_cash_target[0])),
-            float(portfolio_cash_target_payload.get("high", default_config.portfolio_cash_target[1])),
+            float(
+                portfolio_cash_target_payload.get("low", default_config.portfolio_cash_target[0])
+            ),
+            float(
+                portfolio_cash_target_payload.get("high", default_config.portfolio_cash_target[1])
+            ),
         )
     elif (
         isinstance(portfolio_cash_target_payload, list | tuple)
@@ -356,9 +348,7 @@ def load_policy_config(path: str | Path | None = None) -> PolicyConfig:
     calendar = {int(month): str(message) for month, message in calendar_payload.items()}
 
     return PolicyConfig(
-        inherited_ira_policies=(
-            inherited_ira_policies or default_config.inherited_ira_policies
-        ),
+        inherited_ira_policies=(inherited_ira_policies or default_config.inherited_ira_policies),
         cash_policies=cash_policies or default_config.cash_policies,
         portfolio_cash_target=portfolio_cash_target,
         calendar=calendar or default_config.calendar,
@@ -493,7 +483,7 @@ def evaluate_policy(
                 )
             )
 
-    portfolio_low, portfolio_high = policy.portfolio_cash_target
+    _portfolio_low, portfolio_high = policy.portfolio_cash_target
     if total_cash_pct > portfolio_high:
         delta.alerts.append(
             PolicyAlert(

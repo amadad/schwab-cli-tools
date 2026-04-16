@@ -140,6 +140,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra -q"
+filterwarnings = [
+    "ignore:websockets\\.legacy is deprecated; see .*upgrade instructions:DeprecationWarning:websockets\\.legacy",
+]
 testpaths = [
     "tests",
 ]

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from src.core.errors import PortfolioError
+from src.core.json_types import JsonObject
 
 # Sector ETFs for market breadth
 SECTOR_ETFS = {
@@ -32,13 +32,13 @@ INDICES = {
 }
 
 
-def _ensure_ok(response, context: str) -> dict[str, Any]:
+def _ensure_ok(response, context: str) -> JsonObject:
     if response.status_code != 200:
         raise PortfolioError(f"Market data API error ({context}): {response.status_code}")
     return response.json()
 
 
-def get_vix(client) -> dict[str, Any]:
+def get_vix(client) -> JsonObject:
     """Fetch VIX data and interpretation."""
     data = _ensure_ok(client.get_quote("$VIX"), "vix")
     vix_data = data.get("$VIX", {})
@@ -72,12 +72,12 @@ def get_vix(client) -> dict[str, Any]:
     }
 
 
-def get_market_indices(client) -> dict[str, Any]:
+def get_market_indices(client) -> JsonObject:
     """Fetch major index quotes and sentiment."""
     symbols = list(INDICES.keys())
     data = _ensure_ok(client.get_quotes(symbols), "indices")
 
-    results: dict[str, Any] = {}
+    results: JsonObject = {}
     for symbol, name in INDICES.items():
         if symbol in data:
             quote = data[symbol].get("quote", {})
@@ -105,7 +105,7 @@ def get_market_indices(client) -> dict[str, Any]:
     }
 
 
-def get_sector_performance(client) -> dict[str, Any]:
+def get_sector_performance(client) -> JsonObject:
     """Fetch sector ETF performance and rotation signals."""
     symbols = list(SECTOR_ETFS.keys())
     data = _ensure_ok(client.get_quotes(symbols), "sectors")
@@ -175,7 +175,7 @@ def _cumulative_return(candles: list[dict], days: int) -> float:
     return (end_price - start_price) / start_price * 100
 
 
-def get_market_regime(client) -> dict[str, Any]:
+def get_market_regime(client) -> JsonObject:
     """Detect market regime using bond/equity relative strength.
 
     Uses AGG vs BIL (60-day) for risk-on/risk-off determination,
@@ -224,7 +224,7 @@ def get_market_regime(client) -> dict[str, Any]:
     }
 
 
-def get_market_signals(client) -> dict[str, Any]:
+def get_market_signals(client) -> JsonObject:
     """Combine VIX, indices, and sector rotation into actionable signals."""
     vix_data = get_vix(client)
     indices_data = get_market_indices(client)
@@ -266,7 +266,7 @@ def get_market_signals(client) -> dict[str, Any]:
     }
 
 
-def get_implied_volatility(client, symbol: str) -> dict[str, Any]:
+def get_implied_volatility(client, symbol: str) -> JsonObject:
     """Fetch implied volatility from option chain for a symbol.
 
     Uses the ANALYTICAL strategy to get IV data from near-term ATM options.
@@ -299,10 +299,10 @@ def get_implied_volatility(client, symbol: str) -> dict[str, Any]:
         call_map = data.get("callExpDateMap", {})
         if call_map:
             # Take first expiration
-            first_exp: dict[str, Any] = next(iter(call_map.values()), {})
+            first_exp: JsonObject = next(iter(call_map.values()), {})
             if first_exp:
                 # Take the strike closest to ATM
-                first_strike_options: list[dict[str, Any]] | dict[str, Any] = next(
+                first_strike_options: list[JsonObject] | JsonObject = next(
                     iter(first_exp.values()), []
                 )
                 if first_strike_options:
@@ -360,7 +360,7 @@ def get_implied_volatility(client, symbol: str) -> dict[str, Any]:
     }
 
 
-def get_market_hours(client, date_str: str | None = None) -> dict[str, Any]:
+def get_market_hours(client, date_str: str | None = None) -> JsonObject:
     """Check if the equity market is open on a given date.
 
     Args:
@@ -383,7 +383,7 @@ def get_market_hours(client, date_str: str | None = None) -> dict[str, Any]:
     # Response structure: {"equity": {"EQ": {...}}} or {"equity": {"equity": {...}}}
     equity_data = data.get("equity", {})
     # Get the first (and usually only) market entry
-    market_info: dict[str, Any] = next(iter(equity_data.values()), {})
+    market_info: JsonObject = next(iter(equity_data.values()), {})
 
     is_open = market_info.get("isOpen", False)
     market_date = market_info.get("date", str(check_date))

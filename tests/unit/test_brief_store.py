@@ -49,11 +49,26 @@ def _canonical_snapshot(total_value: float = 250000.0) -> dict:
                     ],
                 }
             ],
-            "manual_accounts": {"source_path": None, "last_updated": None, "summary": {}, "accounts": []},
+            "manual_accounts": {
+                "source_path": None,
+                "last_updated": None,
+                "summary": {},
+                "accounts": [],
+            },
             "positions": [],
-            "allocation": {"diversification_score": 88.0, "by_asset_type": {}, "concentration_risks": [], "top_holdings_pct": []},
+            "allocation": {
+                "diversification_score": 88.0,
+                "by_asset_type": {},
+                "concentration_risks": [],
+                "top_holdings_pct": [],
+            },
         },
-        "market": {"vix": {"vix": 17.2, "signal": "normal"}, "signals": None, "indices": None, "sectors": None},
+        "market": {
+            "vix": {"vix": 17.2, "signal": "normal"},
+            "signals": None,
+            "indices": None,
+            "sectors": None,
+        },
         "errors": [],
     }
 

@@ -8,7 +8,7 @@ Usage:
 import argparse
 import sys
 
-from .auth import TokenManager, authenticate_interactive, authenticate_manual
+from .auth import AUTH_RECOVERY_ERRORS, TokenManager, authenticate_interactive, authenticate_manual
 
 
 def parse_args() -> argparse.Namespace:
@@ -95,7 +95,7 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\n\nAuthentication cancelled by user.")
         sys.exit(1)
-    except Exception as e:
+    except AUTH_RECOVERY_ERRORS as e:
         print(f"\nError during authentication: {e}", file=sys.stderr)
         sys.exit(1)
 

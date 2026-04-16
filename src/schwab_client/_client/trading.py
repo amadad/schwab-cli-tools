@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from schwab.orders.equities import (
     equity_buy_limit,
@@ -11,18 +11,21 @@ from schwab.orders.equities import (
     equity_sell_market,
 )
 
+from src.core.json_types import JsonObject
+
 from .common import logger
+from .protocols import SchwabClientTransport
 
 
 class TradingClientMixin:
     """Mixin providing order placement and cancellation helpers."""
 
-    _client: Any
+    _client: SchwabClientTransport
 
     def get_account_hash(self, account_number: str) -> str | None:
         raise NotImplementedError
 
-    def place_order(self, account_hash: str, order: dict) -> dict[str, Any]:
+    def place_order(self, account_hash: str, order: JsonObject) -> JsonObject:
         """Place an order for an account."""
         response = self._client.place_order(account_hash, order)
 
@@ -47,7 +50,7 @@ class TradingClientMixin:
             "status_code": response.status_code,
         }
 
-    def _check_order_status(self, account_hash: str, order_id: str) -> dict[str, Any] | None:
+    def _check_order_status(self, account_hash: str, order_id: str) -> JsonObject | None:
         """Check whether an accepted order was later rejected asynchronously."""
         try:
             response = self._client.get_order(int(order_id), account_hash)
@@ -73,11 +76,11 @@ class TradingClientMixin:
                         "status_code": 201,
                     }
             return None
-        except Exception as exc:  # pragma: no cover - defensive logging path
+        except (AttributeError, OSError, TypeError, ValueError) as exc:  # pragma: no cover - defensive logging path
             logger.warning("Could not verify order status: %s", exc)
             return None
 
-    def _resolve_account_for_trade(self, account_alias: str) -> dict[str, Any]:
+    def _resolve_account_for_trade(self, account_alias: str) -> JsonObject:
         """Resolve account alias to account details used by order methods."""
         from src.schwab_client.client import secure_config
 
@@ -107,7 +110,7 @@ class TradingClientMixin:
         limit_price: float | None = None,
         stop_price: float | None = None,
         trailing_stop_percent: float | None = None,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         """Build an equity order payload."""
         symbol_upper = symbol.upper()
         instruction = "BUY" if action == "BUY" else "SELL"
@@ -120,7 +123,7 @@ class TradingClientMixin:
             builder = equity_buy_limit if action == "BUY" else equity_sell_limit
             return builder(symbol_upper, quantity, str(limit_price)).build()
 
-        order: dict[str, Any] = {
+        order: JsonObject = {
             "orderStrategyType": "SINGLE",
             "session": "NORMAL",
             "duration": "GOOD_TILL_CANCEL",
@@ -163,7 +166,7 @@ class TradingClientMixin:
         stop_price: float | None = None,
         trailing_stop_percent: float | None = None,
         dry_run: bool = False,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         """Build and place or preview an equity order."""
         account = self._resolve_account_for_trade(account_alias)
         if not account.get("success"):
@@ -181,7 +184,7 @@ class TradingClientMixin:
         )
 
         if dry_run:
-            preview: dict[str, Any] = {
+            preview: JsonObject = {
                 "dry_run": True,
                 "action": action,
                 "order_type": order_type,
@@ -207,7 +210,7 @@ class TradingClientMixin:
         symbol: str,
         quantity: float,
         dry_run: bool = False,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         """Place a market buy order."""
         return self._submit_equity_order(
             account_alias=account_alias,
@@ -224,7 +227,7 @@ class TradingClientMixin:
         symbol: str,
         quantity: float,
         dry_run: bool = False,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         """Place a market sell order."""
         return self._submit_equity_order(
             account_alias=account_alias,
@@ -242,7 +245,7 @@ class TradingClientMixin:
         quantity: float,
         limit_price: float,
         dry_run: bool = False,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         """Place a limit buy order."""
         return self._submit_equity_order(
             account_alias=account_alias,
@@ -261,7 +264,7 @@ class TradingClientMixin:
         quantity: float,
         limit_price: float,
         dry_run: bool = False,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         """Place a limit sell order."""
         return self._submit_equity_order(
             account_alias=account_alias,
@@ -280,7 +283,7 @@ class TradingClientMixin:
         quantity: float,
         stop_price: float,
         dry_run: bool = False,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         """Place a stop sell order."""
         return self._submit_equity_order(
             account_alias=account_alias,
@@ -300,7 +303,7 @@ class TradingClientMixin:
         stop_price: float,
         limit_price: float,
         dry_run: bool = False,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         """Place a stop-limit sell order."""
         return self._submit_equity_order(
             account_alias=account_alias,
@@ -320,7 +323,7 @@ class TradingClientMixin:
         quantity: float,
         trailing_stop_percent: float,
         dry_run: bool = False,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         """Place a trailing stop sell order."""
         return self._submit_equity_order(
             account_alias=account_alias,
@@ -332,7 +335,7 @@ class TradingClientMixin:
             dry_run=dry_run,
         )
 
-    def cancel_order(self, account_alias: str, order_id: str) -> dict[str, Any]:
+    def cancel_order(self, account_alias: str, order_id: str) -> JsonObject:
         """Cancel an existing order."""
         account = self._resolve_account_for_trade(account_alias)
         if not account.get("success"):

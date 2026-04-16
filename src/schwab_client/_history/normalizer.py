@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from src.core.errors import ConfigError
+from src.core.json_types import JsonObject
 from src.core.models import SnapshotDocument
-from src.core.snapshot_service import summarize_manual_accounts
+from src.core.snapshot_service import summarize_manual_accounts_model
 
 from ..paths import default_history_import_roots
 
@@ -36,7 +36,7 @@ class SnapshotNormalizer:
             return "import_report"
         return "import_json"
 
-    def _normalize_document(self, document: dict[str, Any]) -> SnapshotDocument:
+    def _normalize_document(self, document: JsonObject) -> SnapshotDocument:
         payload = document
         if {
             "schema_version",
@@ -56,7 +56,7 @@ class SnapshotNormalizer:
 
         raise ConfigError("Unsupported snapshot JSON format")
 
-    def _normalize_report_like_document(self, payload: dict[str, Any]) -> SnapshotDocument:
+    def _normalize_report_like_document(self, payload: JsonObject) -> SnapshotDocument:
         generated_at = payload.get("generated_at") or payload.get("timestamp")
         portfolio = dict(payload.get("portfolio", {}))
         summary = dict(portfolio.get("summary", {}))
@@ -75,20 +75,20 @@ class SnapshotNormalizer:
                 "source_path": None,
                 "last_updated": None,
                 "accounts": [],
-                "summary": summarize_manual_accounts([]),
+                "summary": summarize_manual_accounts_model([]).to_dict(),
             }
         elif isinstance(manual_accounts, list):
             manual_accounts = {
                 "source_path": None,
                 "last_updated": None,
                 "accounts": manual_accounts,
-                "summary": summarize_manual_accounts(manual_accounts),
+                "summary": summarize_manual_accounts_model(manual_accounts).to_dict(),
             }
         else:
             manual_accounts = dict(manual_accounts)
             manual_accounts.setdefault(
                 "summary",
-                summarize_manual_accounts(manual_accounts.get("accounts", [])),
+                summarize_manual_accounts_model(manual_accounts.get("accounts", [])).to_dict(),
             )
             manual_accounts.setdefault("source_path", None)
             manual_accounts.setdefault("last_updated", None)
@@ -136,7 +136,7 @@ class SnapshotNormalizer:
             normalized["errors"] = payload["errors"]
         return SnapshotDocument.from_dict(normalized)
 
-    def _normalize_legacy_snapshot_document(self, payload: dict[str, Any]) -> SnapshotDocument:
+    def _normalize_legacy_snapshot_document(self, payload: JsonObject) -> SnapshotDocument:
         api_accounts = [
             self._normalize_legacy_api_account(account)
             for account in payload.get("api_accounts", [])
@@ -146,10 +146,10 @@ class SnapshotNormalizer:
             "source_path": None,
             "last_updated": payload.get("date"),
             "accounts": manual_accounts_list,
-            "summary": summarize_manual_accounts(manual_accounts_list),
+            "summary": summarize_manual_accounts_model(manual_accounts_list).to_dict(),
         }
 
-        positions: list[dict[str, Any]] = []
+        positions: list[JsonObject] = []
         for account in api_accounts:
             for position in account.get("positions", []):
                 entry = dict(position)
@@ -195,7 +195,7 @@ class SnapshotNormalizer:
             }
         )
 
-    def _normalize_legacy_api_account(self, account: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_legacy_api_account(self, account: JsonObject) -> JsonObject:
         account_label = (
             account.get("account") or f"Account (...{account.get('account_number_last4', '????')})"
         )
@@ -232,10 +232,10 @@ class SnapshotNormalizer:
 
     def _accounts_from_balances_and_positions(
         self,
-        balances: list[dict[str, Any]],
-        positions: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        accounts_by_label: dict[str, dict[str, Any]] = {}
+        balances: list[JsonObject],
+        positions: list[JsonObject],
+    ) -> list[JsonObject]:
+        accounts_by_label: dict[str, JsonObject] = {}
 
         for balance in balances:
             label = balance.get("account") or balance.get("account_name") or "Unknown"
@@ -288,21 +288,45 @@ class SnapshotNormalizer:
         )
 
     @staticmethod
-    def _float(value: Any) -> float:
-        return float(value or 0)
+    def _float(value: object) -> float:
+        if value is None or isinstance(value, bool):
+            return 0.0
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str):
+            return float(value) if value else 0.0
+        return 0.0
 
     @staticmethod
-    def _nullable_float(value: Any) -> float | None:
-        if value is None:
+    def _nullable_float(value: object) -> float | None:
+        if value is None or isinstance(value, bool):
             return None
-        return float(value)
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str):
+            return float(value) if value else None
+        return None
 
     @staticmethod
-    def _int(value: Any) -> int:
-        return int(value or 0)
+    def _int(value: object) -> int:
+        if value is None or isinstance(value, bool):
+            return 0
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            return int(value) if value else 0
+        return 0
 
     @staticmethod
-    def _nullable_int(value: Any) -> int | None:
-        if value is None:
+    def _nullable_int(value: object) -> int | None:
+        if value is None or isinstance(value, bool):
             return None
-        return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            return int(value) if value else None
+        return None
