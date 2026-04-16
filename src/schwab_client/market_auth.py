@@ -14,6 +14,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import httpx
+from authlib.integrations.base_client.errors import OAuthError
 from dotenv import load_dotenv
 from schwab import auth
 
@@ -30,6 +32,7 @@ load_dotenv()
 
 MARKET_TOKEN_PATH_ENV = "SCHWAB_MARKET_TOKEN_PATH"
 MARKET_AUTH_ERRORS = (ConfigError, OSError, sqlite3.Error, ValueError, TypeError, RuntimeError)
+MARKET_PROBE_ERRORS = (*MARKET_AUTH_ERRORS, httpx.HTTPStatusError, OAuthError)
 
 
 def resolve_market_token_path() -> Path:
@@ -62,7 +65,7 @@ def verify_market_token_live() -> tuple[bool, str | None]:
         resp = client.get_quote("$SPX")
         resp.raise_for_status()
         return True, None
-    except Exception as exc:  # noqa: BLE001
+    except MARKET_PROBE_ERRORS as exc:
         return False, str(exc)
 
 

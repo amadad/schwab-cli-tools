@@ -134,6 +134,7 @@ check_untyped_defs = false
 module = [
     "schwab.*",
     "httpx.*",
+    "authlib.*",
 ]
 ignore_missing_imports = true
 

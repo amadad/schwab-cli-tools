@@ -20,6 +20,8 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import httpx
+from authlib.integrations.base_client.errors import OAuthError
 from dotenv import load_dotenv
 from schwab import auth
 
@@ -35,6 +37,7 @@ TOKEN_DB_FILENAME = "tokens.db"
 TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 6.5
 TOKEN_LOCK_TIMEOUT_SECONDS = 60.0
 AUTH_RECOVERY_ERRORS = (ConfigError, OSError, sqlite3.Error, ValueError, TypeError, RuntimeError)
+AUTH_PROBE_ERRORS = (*AUTH_RECOVERY_ERRORS, httpx.HTTPStatusError, OAuthError)
 
 
 def resolve_data_dir() -> Path:
@@ -402,7 +405,7 @@ def verify_portfolio_token_live() -> tuple[bool, str | None]:
         resp = client.get_account_numbers()
         resp.raise_for_status()
         return True, None
-    except Exception as exc:  # noqa: BLE001
+    except AUTH_PROBE_ERRORS as exc:
         return False, str(exc)
 
 
