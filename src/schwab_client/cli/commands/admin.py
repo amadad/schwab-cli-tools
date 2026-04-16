@@ -17,38 +17,64 @@ from ...auth import (
     authenticate_manual,
     resolve_data_dir,
     resolve_token_path,
+    verify_portfolio_token_live,
 )
-from ...market_auth import authenticate_market_data, resolve_market_token_path
+from ...market_auth import (
+    authenticate_market_data,
+    resolve_market_token_path,
+    verify_market_token_live,
+)
 from ..output import format_header, handle_cli_error, print_json_response
 
 
-def cmd_auth(*, output_mode: str = "text") -> None:
-    """Check authentication status."""
+def cmd_auth(*, output_mode: str = "text", rail: str = "portfolio") -> None:
+    """Check authentication status with live API verification."""
     command = "auth"
     try:
-        manager = TokenManager()
+        if rail == "market":
+            manager = TokenManager(token_path=resolve_market_token_path())
+        else:
+            manager = TokenManager()
         info = manager.get_token_info()
         storage = manager.get_storage_info()
+
+        # Live verification against Schwab servers
+        live_ok, live_error = (
+            verify_market_token_live() if rail == "market" else verify_portfolio_token_live()
+        )
+        info["live_verified"] = live_ok
+        if not live_ok and live_error:
+            info["live_error"] = live_error
+            if info.get("valid"):
+                info["valid"] = False
+                info["warning"] = (
+                    "Token file looks valid but Schwab rejected it. "
+                    f"Run 'schwab auth login --{rail} --manual --force' to re-authenticate."
+                )
+                info["warning_level"] = "critical"
 
         if output_mode == "json":
             print_json_response(command, data={"token": info, "storage": storage})
             return
 
-        print(format_header("AUTHENTICATION STATUS"))
-        print(f"  Token exists: {info.get('exists', False)}")
-        print(f"  Token valid:  {info.get('valid', False)}")
+        print(format_header(f"AUTHENTICATION STATUS ({rail.upper()})"))
+        print(f"  Token exists:    {info.get('exists', False)}")
+        print(f"  Token valid:     {info.get('valid', False)}")
+        print(f"  Live verified:   {live_ok}")
 
         expires_at = info.get("expires") or info.get("expires_at")
         if expires_at:
-            print(f"  Expires at:   {expires_at}")
+            print(f"  Expires at:      {expires_at}")
 
         if info.get("warning"):
-            print(f"  Warning:      {info['warning']}")
-        print(f"  Token DB:     {storage['db_path']}")
-        print(f"  Locking:      {storage['locking']}")
+            print(f"  Warning:         {info['warning']}")
+        if live_error and not live_ok:
+            print(f"  Live error:      {live_error[:120]}")
+        print(f"  Token DB:        {storage['db_path']}")
+        print(f"  Locking:         {storage['locking']}")
 
         if not info.get("valid", False):
-            print("\n  Run 'schwab-auth' to authenticate.")
+            print(f"\n  Run 'schwab auth login --{rail} --manual --force' to re-authenticate.")
 
         print()
 
@@ -157,6 +183,30 @@ def cmd_doctor(*, output_mode: str = "text") -> None:
         portfolio_storage = portfolio_manager.get_storage_info()
         market_storage = market_manager.get_storage_info()
 
+        # Live verification against Schwab servers
+        p_live_ok, p_live_error = verify_portfolio_token_live()
+        m_live_ok, m_live_error = verify_market_token_live()
+        portfolio_token["live_verified"] = p_live_ok
+        market_token["live_verified"] = m_live_ok
+        if not p_live_ok and p_live_error:
+            portfolio_token["live_error"] = p_live_error
+        if not m_live_ok and m_live_error:
+            market_token["live_error"] = m_live_error
+
+        # Override "valid" when file looks ok but server rejects
+        if not p_live_ok and portfolio_token.get("valid"):
+            portfolio_token["valid"] = False
+            portfolio_token["warning"] = (
+                "Token file looks valid but Schwab rejected it. Re-authenticate."
+            )
+            portfolio_token["warning_level"] = "critical"
+        if not m_live_ok and market_token.get("valid"):
+            market_token["valid"] = False
+            market_token["warning"] = (
+                "Token file looks valid but Schwab rejected it. Re-authenticate."
+            )
+            market_token["warning_level"] = "critical"
+
         accounts = secure_config.get_all_accounts()
         accounts_configured = bool(accounts)
 
@@ -167,7 +217,9 @@ def cmd_doctor(*, output_mode: str = "text") -> None:
             warnings.append("portfolio_credentials_missing")
         if not portfolio_token.get("exists", False):
             warnings.append("portfolio_token_missing")
-        if portfolio_token.get("exists") and not portfolio_token.get("valid", False):
+        if not p_live_ok and portfolio_token.get("exists"):
+            warnings.append("portfolio_token_rejected")
+        elif portfolio_token.get("exists") and not portfolio_token.get("valid", False):
             warnings.append("portfolio_token_expired")
         if portfolio_token.get("warning_level") == "critical":
             warnings.append("portfolio_token_expiring_critical")
@@ -179,7 +231,9 @@ def cmd_doctor(*, output_mode: str = "text") -> None:
             warnings.append("market_credentials_missing")
         if not market_token.get("exists", False):
             warnings.append("market_token_missing")
-        if market_token.get("exists") and not market_token.get("valid", False):
+        if not m_live_ok and market_token.get("exists"):
+            warnings.append("market_token_rejected")
+        elif market_token.get("exists") and not market_token.get("valid", False):
             warnings.append("market_token_expired")
         if market_token.get("warning_level") == "critical":
             warnings.append("market_token_expiring_critical")
@@ -224,8 +278,9 @@ def cmd_doctor(*, output_mode: str = "text") -> None:
         print(f"    Credentials: {'OK' if data['portfolio']['credentials_present'] else 'MISSING'}")
         print(
             f"    Token: {'present' if portfolio_token.get('exists') else 'missing'}"
-            f" ({'valid' if portfolio_token.get('valid') else 'EXPIRED'})"
+            f" ({'valid' if portfolio_token.get('valid') else 'INVALID'})"
         )
+        print(f"    Live probe: {'OK' if p_live_ok else 'FAILED'}")
         if portfolio_token.get("expires_in_hours") is not None:
             hours = portfolio_token["expires_in_hours"]
             days = portfolio_token.get("expires_in_days", 0)
@@ -244,8 +299,9 @@ def cmd_doctor(*, output_mode: str = "text") -> None:
         print(f"    Credentials: {'OK' if data['market']['credentials_present'] else 'MISSING'}")
         print(
             f"    Token: {'present' if market_token.get('exists') else 'missing'}"
-            f" ({'valid' if market_token.get('valid') else 'EXPIRED'})"
+            f" ({'valid' if market_token.get('valid') else 'INVALID'})"
         )
+        print(f"    Live probe: {'OK' if m_live_ok else 'FAILED'}")
         if market_token.get("expires_in_hours") is not None:
             hours = market_token["expires_in_hours"]
             days = market_token.get("expires_in_days", 0)

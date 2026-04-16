@@ -380,6 +380,32 @@ def get_token_manager(
     return TokenManager(token_path=token_path or DEFAULT_TOKEN_PATH, db_path=db_path)
 
 
+def verify_portfolio_token_live() -> tuple[bool, str | None]:
+    """Probe the Schwab API with the current portfolio token.
+
+    Returns (success, error_message).  A successful probe means the refresh
+    token is still accepted server-side.
+    """
+    api_key = os.getenv("SCHWAB_INTEL_APP_KEY")
+    app_secret = os.getenv("SCHWAB_INTEL_CLIENT_SECRET")
+    if not api_key or not app_secret:
+        return False, "credentials_missing"
+
+    manager = get_token_manager()
+    if not manager.tokens_exist():
+        return False, "token_file_missing"
+
+    try:
+        client = _build_locked_client(
+            api_key=api_key, app_secret=app_secret, manager=manager
+        )
+        resp = client.get_account_numbers()
+        resp.raise_for_status()
+        return True, None
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+
+
 def _build_locked_client(
     *,
     api_key: str,

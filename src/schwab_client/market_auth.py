@@ -43,6 +43,29 @@ def resolve_market_token_path() -> Path:
 MARKET_TOKEN_PATH = resolve_market_token_path()
 
 
+def verify_market_token_live() -> tuple[bool, str | None]:
+    """Probe the Schwab Market API with the current market token.
+
+    Returns (success, error_message).
+    """
+    api_key = os.getenv("SCHWAB_MARKET_APP_KEY")
+    app_secret = os.getenv("SCHWAB_MARKET_CLIENT_SECRET")
+    if not api_key or not app_secret:
+        return False, "credentials_missing"
+
+    manager = get_token_manager(token_path=MARKET_TOKEN_PATH)
+    if not manager.tokens_exist():
+        return False, "token_file_missing"
+
+    try:
+        client = _build_managed_market_client(api_key, app_secret, manager)
+        resp = client.get_quote("$SPX")
+        resp.raise_for_status()
+        return True, None
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+
+
 def _build_managed_market_client(
     api_key: str,
     app_secret: str,

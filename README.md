@@ -86,8 +86,11 @@ you to paste the callback URL. Both auth commands support this flag.
 Market commands (`vix`, `indices`, `sectors`, `market`, `movers`, `futures`) require
 the market auth flow. Token JSON files are stored under `~/.cli-schwab/tokens`
 by default, with a sibling SQLite `tokens.db` sidecar used for local locking and
-cached token metadata. `schwab auth --json` and `schwab doctor --json` expose that
-storage state for diagnostics. Refresh tokens expire after 7 days.
+cached token metadata. `schwab auth --json` and `schwab doctor --json` perform
+live API probes against Schwab's servers and report `live_verified: true/false`.
+If a token file looks valid locally but the server rejects the refresh token,
+`valid` is overridden to `false` with a `live_error` field. Refresh tokens
+expire after 7 days but Schwab can invalidate them server-side earlier.
 
 If a dedicated `SCHWAB_MARKET_*` app returns `invalid_client` / `Unauthorized`, you can
 still keep a separate market token while reusing the working portfolio OAuth app in

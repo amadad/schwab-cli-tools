@@ -586,7 +586,7 @@ def main(args: list | None = None) -> None:
                 timeout=getattr(parsed, "timeout", 300.0),
             )
         else:
-            cmd_auth(output_mode=output_mode)
+            cmd_auth(output_mode=output_mode, rail=auth_rail)
     elif parsed.command == "doctor":
         cmd_doctor(output_mode=output_mode)
     elif parsed.command == "accounts":

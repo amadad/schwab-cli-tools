@@ -46,9 +46,22 @@ Read-only access (positions, balances, quotes) works without this step.
 Tokens default to `~/.cli-schwab/tokens`. In this repo, keep tokens in
 `./tokens` (gitignored) by setting `SCHWAB_CLI_DATA_DIR=.` or explicit
 `SCHWAB_TOKEN_PATH` / `SCHWAB_MARKET_TOKEN_PATH`. A sibling SQLite `tokens.db`
-sidecar is created automatically for local locking and cached token metadata;
-`uv run schwab auth --json` and `uv run schwab doctor --json` surface that
-storage state. Reports default to `~/.cli-schwab/reports`; set
+sidecar is created automatically for local locking and cached token metadata.
+
+`schwab auth --json`, `schwab auth --market --json`, and `schwab doctor --json`
+now perform **live API probes** (portfolio: `get_account_numbers()`, market:
+`get_quote("$SPX")`) and report `live_verified: true/false`. If a token file
+looks valid but the server rejects it, `valid` is overridden to `false` with a
+`live_error` field. Schwab can invalidate refresh tokens server-side before their
+nominal 7-day expiry — the live probe catches this.
+
+To re-authenticate:
+```bash
+uv run schwab auth login --portfolio --manual --force
+uv run schwab auth login --market --manual --force
+```
+
+Reports default to `~/.cli-schwab/reports`; set
 `SCHWAB_REPORT_DIR=./private/reports` to keep them under `private/`. Snapshot
 history defaults to `./private/history/schwab_history.db` when `./private/`
 exists; override with `SCHWAB_HISTORY_DB_PATH`. Refresh tokens expire after 7 days.

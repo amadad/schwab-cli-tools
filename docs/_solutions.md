@@ -1,5 +1,11 @@
 # Solutions Log
 
+## 2026-04-16 — Auth status reported dead tokens as valid (fixed: live probes added)
+
+- **Symptom:** `schwab auth --json` and `schwab doctor --json` reported portfolio token as valid based on local file timestamps, but the actual refresh token was rejected server-side (`refresh_token_authentication_error`). Schwab can invalidate refresh tokens before their nominal 7-day expiry.
+- **Root cause:** diagnostics only checked local token metadata (creation time + expiry math), never probed Schwab's API.
+- **Fix:** added `verify_portfolio_token_live()` (`auth.py`) and `verify_market_token_live()` (`market_auth.py`) — lightweight probes that call `get_account_numbers()` and `get_quote(“$SPX”)` respectively. `cmd_auth` and `cmd_doctor` now call these, report `live_verified: true/false` + `live_error`, and override `valid` to `false` when the server rejects a locally-plausible token. Also fixed `schwab auth --market` always showing the portfolio token (missing rail parameter passthrough).
+
 ## 2026-04-16 — Recommendation generation still accepted loose JSON blobs instead of canonical state objects
 
 - **Symptom:** even after snapshot/context/history capture moved in-process, recommendation generation still flowed through ad hoc context dicts, which left the engine’s main input contract fuzzy and kept `recommend_from_context(...)` anchored to serialized payload shape instead of the canonical state object.
