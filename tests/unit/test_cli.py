@@ -224,7 +224,7 @@ class TestAuthRouting:
 
         main(["auth"])
 
-        mock_cmd_auth.assert_called_once_with(output_mode="text")
+        mock_cmd_auth.assert_called_once_with(output_mode="text", rail="portfolio")
 
     @patch("src.schwab_client.cli.cmd_auth_login")
     def test_auth_login_routes_to_market_rail(self, mock_cmd_auth_login):
