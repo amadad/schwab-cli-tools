@@ -11,14 +11,8 @@ import httpx
 from config.secure_account_config import ACCOUNTS_FILE, secure_config
 from src.core.errors import ConfigError, PortfolioError
 
-from ...auth import (
-    TokenManager,
-    authenticate_interactive,
-    authenticate_manual,
-    resolve_data_dir,
-    resolve_token_path,
-    verify_portfolio_token_live,
-)
+from ...auth import authenticate_interactive, authenticate_manual, verify_portfolio_token_live
+from ...auth_tokens import TokenManager, resolve_data_dir, resolve_token_path
 from ...market_auth import (
     authenticate_market_data,
     resolve_market_token_path,

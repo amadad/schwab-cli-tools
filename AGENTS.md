@@ -29,10 +29,13 @@
 
 ```
 src/schwab_client/cli/
-├── __init__.py      # Entry point, argparse
+├── __init__.py      # Package entrypoint + compatibility exports
+├── parser.py        # argparse setup and aliases
+├── router.py        # Command routing
 ├── context.py       # get_client(), get_cached_market_client()
 ├── output.py        # JSON envelope, formatters
-└── commands/        # One file per command group
+└── commands/        # Lazy map + one file per command group
+    ├── __init__.py  # Lazy handler map
     ├── portfolio.py
     ├── market.py
     ├── history.py
@@ -46,18 +49,20 @@ src/schwab_client/
 ├── advisor_cli.py   # Separate schwab-advisor recommendation-engine entrypoint
 ├── _advisor/        # Recommendation store schema + persistence
 ├── _client/         # Internal client mixins / shared helpers
-├── _history/        # Internal history schema + normalization + store
+├── _history/        # Internal history schema + normalization + store/mixins
 ├── history.py       # Public SQLite persistence + query surface
 ├── paths.py         # Centralized path/env resolution
+├── auth_tokens.py   # Token paths, locking, metadata sidecar
+├── secure_files.py  # Restrictive permissions for tokens/private DBs
 └── snapshot.py      # Canonical snapshot collection
 ```
 
 ### Adding a New Command
 
 1. Add handler function to appropriate `commands/*.py` file
-2. Import in `commands/__init__.py`
-3. Add argparse subparser in `cli/__init__.py`
-4. Add routing in `main()` function
+2. Add the handler to the lazy map in `commands/__init__.py`
+3. Add argparse subparser in `cli/parser.py`
+4. Add routing in `cli/router.py`
 
 For recommendation-engine-only flows, add subparsers in `src/schwab_client/advisor_cli.py`
 instead of extending the main `schwab` parser.
@@ -71,7 +76,7 @@ instead of extending the main `schwab` parser.
 - Use `format_header()` from `output.py` for text section headers
 - Keep public policy defaults in `config/policy.template.json`; use `private/policy.json`
   or `SCHWAB_POLICY_PATH` for local aliases and thresholds
-- Reuse the managed token storage in `auth.py` / `market_auth.py`; token JSON files
+- Reuse the managed token storage in `auth.py` / `auth_tokens.py` / `market_auth.py`; token JSON files
   are paired with a local SQLite `tokens.db` sidecar for locking and metadata
 
 ## Safety
@@ -99,9 +104,14 @@ uv run pytest
 uv run pytest tests/unit/
 
 # Run lint/type gates used in CI
-uv run ruff check src tests scripts/check_quality_budget.py
-uv run mypy src tests
-uv run python scripts/check_quality_budget.py --max-any 20 --max-broad-catches 0
+uv run ruff check src tests config scripts
+uv run mypy src tests config scripts
+uv run python scripts/check_quality_budget.py --root src --max-any 20 --max-broad-catches 0
+uv run python scripts/check_quality_budget.py --root config --max-any 0 --max-broad-catches 0
+uv run python scripts/check_quality_budget.py --root scripts --max-any 11 --max-broad-catches 0
+uv export --no-dev --format requirements-txt --no-hashes --no-emit-project --output-file /tmp/schwab-requirements.txt
+uv run --with pip-audit pip-audit -r /tmp/schwab-requirements.txt --no-deps --disable-pip --progress-spinner off
+uv run bandit -q -r src config scripts -ll --skip B310,B608
 ```
 
 `tests/conftest.py` now provides lightweight CLI helpers (`run_cli()`, `CLIResult`, and

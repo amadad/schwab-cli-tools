@@ -131,7 +131,7 @@ class SecureAccountConfig:
             self.account_info = {}
             self.account_mappings = {}
             self.categories = {}
-        except Exception as e:
+        except (OSError, TypeError, AttributeError, ValueError) as e:
             logger.error(f"Error loading account config: {e}")
             self.account_info = {}
             self.account_mappings = {}

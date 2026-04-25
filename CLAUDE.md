@@ -245,10 +245,13 @@ src/schwab_client/
 ├── advisor_cli.py          # Optional schwab-advisor recommendation-engine entrypoint
 ├── runtime_env.py          # Explicit runtime-only secret/env loading
 ├── cli/                    # CLI package (modular)
-│   ├── __init__.py         # Entry point, argparse, routing
+│   ├── __init__.py         # Package entrypoint + compatibility exports
+│   ├── parser.py           # argparse setup and aliases
+│   ├── router.py           # Command routing
 │   ├── context.py          # Cached clients, trade logger
 │   ├── output.py           # JSON envelope, formatters
-│   └── commands/           # Command handlers
+│   └── commands/           # Lazy command map + handlers
+│       ├── __init__.py     # Lazy handler map
 │       ├── portfolio.py    # portfolio, positions, balance, allocation
 │       ├── market.py       # vix, indices, sectors, movers, futures, hours, iv
 │       ├── history.py      # history, query
@@ -260,9 +263,11 @@ src/schwab_client/
 ├── _advisor/               # Recommendation store schema + persistence
 ├── _client/                # Internal client mixins / shared helpers
 │   └── protocols.py        # Shared raw Schwab transport protocol
-├── _history/               # Internal history schema + normalization + store
-├── auth.py                 # Portfolio API auth + managed token storage
-├── market_auth.py          # Market API auth + managed token storage
+├── _history/               # Internal history schema + normalization + store/mixins
+├── auth_tokens.py          # Token paths, locking, metadata sidecar
+├── secure_files.py         # Restrictive permissions for tokens/private DBs
+├── auth.py                 # Portfolio API auth flows
+├── market_auth.py          # Market API auth flows
 ├── history.py              # Public SQLite history API
 ├── snapshot.py             # Canonical snapshot collection
 └── client.py               # Public SchwabClientWrapper surface
@@ -301,22 +306,24 @@ config/
 1. **Client Caching**: `context.py` provides lazy singletons for portfolio and market
    clients. Token I/O happens once per CLI invocation.
 
-2. **Managed Token Storage**: `auth.py` and `market_auth.py` keep JSON token files
+2. **Managed Token Storage**: `auth_tokens.py`, `auth.py`, and `market_auth.py` keep JSON token files
    paired with a sibling SQLite `tokens.db` sidecar for locking and cached metadata.
 
 3. **Unified Trade Execution**: `trade.py` uses a single `execute_trade()` function
    for both buy and sell, eliminating duplication.
 
-4. **Command Aliases**: Short aliases (`p`, `dr`, `snap`, `ctx`) defined in `cli/__init__.py`.
+4. **Command Aliases**: Short aliases (`p`, `dr`, `snap`, `ctx`) defined in `cli/parser.py`.
 
-5. **Centralized Output**: `output.py` handles JSON envelope, formatters, and error
+5. **Lazy CLI Imports**: command modules, public package exports, and Schwab order/auth imports are loaded on demand so help/version output stays fast and warning-free.
+
+6. **Centralized Output**: `output.py` handles JSON envelope, formatters, and error
    handling consistently across all commands.
 
-6. **Shared Payload Boundaries**: `brief_types.py`, `context_models.py`, `json_types.py`,
+7. **Shared Payload Boundaries**: `brief_types.py`, `context_models.py`, `json_types.py`,
    and `_client/protocols.py` hold small reusable types/protocols instead of repeating
    ad hoc tuple/dict shapes inside orchestrators.
 
-7. **Canonical Decision Context**: the recommendation engine should consume
+8. **Canonical Decision Context**: the recommendation engine should consume
    `PortfolioContext` objects internally; only use dict payloads at serialization or
    CLI boundaries.
 
@@ -333,9 +340,14 @@ uv run pytest tests/unit/
 uv run pytest tests/unit/test_cli.py -v
 
 # Run lint/type/quality gates
-uv run ruff check src tests scripts/check_quality_budget.py
-uv run mypy src tests
-uv run python scripts/check_quality_budget.py --max-any 20 --max-broad-catches 0
+uv run ruff check src tests config scripts
+uv run mypy src tests config scripts
+uv run python scripts/check_quality_budget.py --root src --max-any 20 --max-broad-catches 0
+uv run python scripts/check_quality_budget.py --root config --max-any 0 --max-broad-catches 0
+uv run python scripts/check_quality_budget.py --root scripts --max-any 11 --max-broad-catches 0
+uv export --no-dev --format requirements-txt --no-hashes --no-emit-project --output-file /tmp/schwab-requirements.txt
+uv run --with pip-audit pip-audit -r /tmp/schwab-requirements.txt --no-deps --disable-pip --progress-spinner off
+uv run bandit -q -r src config scripts -ll --skip B310,B608
 ```
 
 `tests/conftest.py` now provides lightweight CLI helpers (`run_cli()`, `CLIResult`, and

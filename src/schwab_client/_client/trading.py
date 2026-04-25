@@ -2,19 +2,31 @@
 
 from __future__ import annotations
 
+from functools import cache
 from typing import Literal
 
-from schwab.orders.equities import (
-    equity_buy_limit,
-    equity_buy_market,
-    equity_sell_limit,
-    equity_sell_market,
-)
-
 from src.core.json_types import JsonObject
+from src.schwab_client.auth_tokens import suppress_authlib_jose_warning
 
 from .common import logger
 from .protocols import SchwabClientTransport
+
+
+@cache
+def _equity_order_builders():
+    with suppress_authlib_jose_warning():
+        from schwab.orders.equities import (
+            equity_buy_limit,
+            equity_buy_market,
+            equity_sell_limit,
+            equity_sell_market,
+        )
+    return {
+        "buy_limit": equity_buy_limit,
+        "buy_market": equity_buy_market,
+        "sell_limit": equity_sell_limit,
+        "sell_market": equity_sell_market,
+    }
 
 
 class TradingClientMixin:
@@ -115,13 +127,14 @@ class TradingClientMixin:
         symbol_upper = symbol.upper()
         instruction = "BUY" if action == "BUY" else "SELL"
 
+        builders = _equity_order_builders()
         if order_type == "MARKET":
-            builder = equity_buy_market if action == "BUY" else equity_sell_market
-            return builder(symbol_upper, quantity).build()
+            key = "buy_market" if action == "BUY" else "sell_market"
+            return builders[key](symbol_upper, quantity).build()
 
         if order_type == "LIMIT":
-            builder = equity_buy_limit if action == "BUY" else equity_sell_limit
-            return builder(symbol_upper, quantity, str(limit_price)).build()
+            key = "buy_limit" if action == "BUY" else "sell_limit"
+            return builders[key](symbol_upper, quantity, str(limit_price)).build()
 
         order: JsonObject = {
             "orderStrategyType": "SINGLE",

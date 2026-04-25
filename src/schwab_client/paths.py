@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from .auth import resolve_data_dir
+from .auth_tokens import resolve_data_dir
 
 HISTORY_DB_ENV_VAR = "SCHWAB_HISTORY_DB_PATH"
 REPORT_DIR_ENV_VAR = "SCHWAB_REPORT_DIR"

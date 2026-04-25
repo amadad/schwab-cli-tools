@@ -7,6 +7,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from src.schwab_client.secure_files import prepare_sensitive_file, restrict_sqlite_permissions
+
 from .schema import SCHEMA_STATEMENTS, resolve_advisor_db_path
 
 RECOMMENDATION_RUN_COLUMN_MIGRATIONS = {
@@ -35,10 +37,11 @@ class AdvisorStore:
         self.db_path = resolve_advisor_db_path(db_path)
 
     def connect(self) -> sqlite3.Connection:
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        prepare_sensitive_file(self.db_path)
         con = sqlite3.connect(self.db_path)
         setattr(con, "row_factory", sqlite3.Row)  # noqa: B010
         con.execute("PRAGMA foreign_keys = ON")
+        restrict_sqlite_permissions(self.db_path)
         return con
 
     def initialize(self) -> Path:

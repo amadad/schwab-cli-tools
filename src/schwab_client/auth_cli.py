@@ -8,7 +8,8 @@ Usage:
 import argparse
 import sys
 
-from .auth import AUTH_RECOVERY_ERRORS, TokenManager, authenticate_interactive, authenticate_manual
+from .auth import authenticate_interactive, authenticate_manual
+from .auth_tokens import AUTH_RECOVERY_ERRORS, TokenManager
 
 
 def parse_args() -> argparse.Namespace:

@@ -440,10 +440,13 @@ src/schwab_client/
 ├── advisor_cli.py          # Optional schwab-advisor recommendation-engine entrypoint
 ├── runtime_env.py          # Explicit runtime-only secret/env loading
 ├── cli/                    # Modular CLI package
-│   ├── __init__.py         # Entry point, argparse, routing
+│   ├── __init__.py         # Package entrypoint + compatibility exports
+│   ├── parser.py           # argparse setup and aliases
+│   ├── router.py           # Command routing
 │   ├── context.py          # Cached clients, trade logger
 │   ├── output.py           # JSON envelope, formatters
-│   └── commands/           # Command handlers
+│   └── commands/           # Lazy command map + handlers
+│       ├── __init__.py     # Lazy handler map
 │       ├── portfolio.py    # portfolio, positions, balance, allocation
 │       ├── market.py       # vix, indices, sectors, movers, etc.
 │       ├── history.py      # history, query
@@ -454,9 +457,11 @@ src/schwab_client/
 │       └── report.py       # report, snapshot
 ├── _advisor/               # Recommendation store schema + persistence
 ├── _client/                # Internal client mixins / shared helpers
-├── _history/               # Internal history schema + normalization + store
-├── auth.py                 # Portfolio API authentication
-├── market_auth.py          # Market API authentication
+├── _history/               # Internal history schema + normalization + store/mixins
+├── auth_tokens.py          # Token paths, locking, metadata sidecar
+├── secure_files.py         # Restrictive permissions for tokens/private DBs
+├── auth.py                 # Portfolio API authentication flows
+├── market_auth.py          # Market API authentication flows
 ├── history.py              # Public SQLite history API
 ├── snapshot.py             # Canonical snapshot collection
 └── client.py               # Public SchwabClientWrapper surface
@@ -504,9 +509,15 @@ uv run pytest tests/ -v
 # Run with mock clients (no credentials needed)
 uv run pytest tests/unit/ -v
 
-# Lint and format
-uv run ruff check . --fix
-uv run black .
+# Lint, type, quality, and security gates
+uv run ruff check src tests config scripts
+uv run mypy src tests config scripts
+uv run python scripts/check_quality_budget.py --root src --max-any 20 --max-broad-catches 0
+uv run python scripts/check_quality_budget.py --root config --max-any 0 --max-broad-catches 0
+uv run python scripts/check_quality_budget.py --root scripts --max-any 11 --max-broad-catches 0
+uv export --no-dev --format requirements-txt --no-hashes --no-emit-project --output-file /tmp/schwab-requirements.txt
+uv run --with pip-audit pip-audit -r /tmp/schwab-requirements.txt --no-deps --disable-pip --progress-spinner off
+uv run bandit -q -r src config scripts -ll --skip B310,B608
 ```
 
 ### Shell Completion

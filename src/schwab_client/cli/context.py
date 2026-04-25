@@ -12,7 +12,8 @@ from typing import Any
 
 from src.core.errors import ConfigError
 
-from ..auth import get_authenticated_client, resolve_data_dir
+from ..auth import get_authenticated_client
+from ..auth_tokens import resolve_data_dir
 from ..client import SchwabClientWrapper
 from ..market_auth import get_market_client
 

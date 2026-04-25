@@ -1,5 +1,11 @@
 # Solutions Log
 
+## 2026-04-25 — Local security sweep found vulnerable deps and permissive private-store defaults
+
+- **Symptom:** the repo passed its normal lint/type/test gates while runtime dependency audit still found vulnerable locked packages, and OAuth token/private SQLite files inherited the caller's default umask.
+- **Fix:** made directly imported CLI/auth packages explicit runtime dependencies, constrained vulnerable transitive packages, upgraded the lockfile, and added CI gates for runtime `pip-audit` plus medium/high `bandit`. Added `secure_files.py` and wired token JSON, token sidecar DBs, history DBs, advisor DBs, and SQLite sidecars through owner-only directory/file permissions. Also split token persistence into `auth_tokens.py`, CLI parser/routing, and history persistence helpers, with lazy command/Authlib/Schwab imports so help/version output stays warning-free.
+- **Follow-up:** audit runtime exports rather than the developer environment, because `pip-audit`'s own tooling dependencies can create irrelevant findings. Keep `B310`/`B608` bandit skips scoped to the current known false positives unless those call sites change.
+
 ## 2026-04-16 — Auth status reported dead tokens as valid (fixed: live probes added)
 
 - **Symptom:** `schwab auth --json` and `schwab doctor --json` reported portfolio token as valid based on local file timestamps, but the actual refresh token was rejected server-side (`refresh_token_authentication_error`). Schwab can invalidate refresh tokens before their nominal 7-day expiry.

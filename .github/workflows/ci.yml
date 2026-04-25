@@ -23,13 +23,25 @@ jobs:
         run: uv sync --group dev
 
       - name: Ruff
-        run: uv run ruff check src tests
+        run: uv run ruff check src tests config scripts
 
       - name: Mypy
-        run: uv run mypy src tests
+        run: uv run mypy src tests config scripts
 
       - name: Quality budget
-        run: uv run python scripts/check_quality_budget.py --max-any 20 --max-broad-catches 0
+        run: |
+          uv run python scripts/check_quality_budget.py --root src --max-any 20 --max-broad-catches 0
+          uv run python scripts/check_quality_budget.py --root config --max-any 0 --max-broad-catches 0
+          uv run python scripts/check_quality_budget.py --root scripts --max-any 11 --max-broad-catches 0
+
+      - name: Dependency audit
+        run: |
+          audit_requirements="${RUNNER_TEMP}/requirements-audit.txt"
+          uv export --no-dev --format requirements-txt --no-hashes --no-emit-project --output-file "$audit_requirements"
+          uv run --with pip-audit pip-audit -r "$audit_requirements" --no-deps --disable-pip --progress-spinner off
+
+      - name: Bandit
+        run: uv run bandit -q -r src config scripts -ll --skip B310,B608
 
       - name: Pytest
         run: uv run pytest -q

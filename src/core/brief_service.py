@@ -248,7 +248,7 @@ class BriefService:
                 advisor_run_id=advisor_run_id,
                 reused_advisor_issue=reused_issue,
             )
-        except BaseException as exc:
+        except BRIEF_SERVICE_ERRORS as exc:
             self.history.create_or_update_brief_run(
                 snapshot_id=int(snapshot_id),
                 snapshot_observed_at=snapshot_observed_at,

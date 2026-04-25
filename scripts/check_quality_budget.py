@@ -8,7 +8,9 @@ import re
 from pathlib import Path
 
 ANY_PATTERN = re.compile(r"\bAny\b")
-BROAD_EXCEPT_PATTERN = re.compile(r"^\s*except\s+Exception\b|^\s*except:\s*$", re.MULTILINE)
+BROAD_EXCEPT_PATTERN = re.compile(
+    r"^\s*except\s+(Exception|BaseException)\b|^\s*except:\s*$", re.MULTILINE
+)
 
 
 def count_matches(root: Path) -> tuple[int, int]:

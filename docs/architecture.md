@@ -61,11 +61,23 @@ Avoid putting here:
 Command-line interface.
 
 Responsibilities:
-- parse args
+- parse args in `parser.py`
+- route commands in `router.py`
+- lazy-load command handler modules through `commands/__init__.py`
+- keep package entrypoint/compatibility exports in `__init__.py`
 - call the appropriate service or wrapper
 - format text output
 - emit JSON envelopes
 - map errors to CLI exit behavior
+
+### `src/schwab_client/auth.py`, `auth_tokens.py`, and `market_auth.py`
+Authentication flows and local token persistence.
+
+Responsibilities:
+- keep browser/manual OAuth flows in the auth entrypoint modules
+- keep Schwab/Authlib imports lazy so help/version output stays warning-free
+- keep token paths, locking, metadata, and refresh writes in `auth_tokens.py`
+- enforce owner-only modes for token files and SQLite sidecars via `secure_files.py`
 
 ### `src/schwab_client/advisor_cli.py`
 Separate opt-in CLI entrypoint for the recommendation engine.
@@ -102,7 +114,7 @@ Responsibilities:
 - SQLite schema
 - document normalization
 - import/backfill logic
-- persistence/query implementation
+- persistence/query implementation (`store.py` plus focused brief/snapshot-writer mixins)
 - DB-backed morning brief state (`brief_runs`, `brief_deliveries`)
 
 Public entry point remains:
@@ -152,13 +164,13 @@ export-oriented wrapper that writes the same canonical snapshot JSON to disk.
 ### Add a CLI command
 1. Implement the handler in `src/schwab_client/cli/commands/`
 2. Move reusable logic into `src/core/` or a focused integration module if needed
-3. Register it in `cli/__init__.py`
+3. Register the handler in the lazy command map, parser wiring in `cli/parser.py`, and routing in `cli/router.py`
 
 ### Add historical or brief-run fields
 1. update canonical snapshot collection in `snapshot.py` when the snapshot shape changes
 2. update normalization in `_history/normalizer.py` if imports need to support it
 3. update schema or views in `_history/schema.py`
-4. update persistence in `_history/store.py`
+4. update persistence in `_history/store.py`, `_history/brief_store.py`, or `_history/snapshot_writers.py`
 5. update `docs/history.md`
 
 ### Extend the morning brief or recommendation engine
