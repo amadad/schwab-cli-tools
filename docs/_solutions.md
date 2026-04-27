@@ -1,5 +1,11 @@
 # Solutions Log
 
+## 2026-04-27 — Token sidecar carried a half-wired column and stale rows from a prior data dir
+
+- **Symptom:** every token refresh wrote a `token_json` column in `tokens.db` that no read path consumed (`read_token_object` only loaded the JSON file, with `token_json` never SELECTed), so we paid a dual-write hazard for nothing. The same DB also carried an orphan row from a previous `~/.schwab-cli-tools/...` data dir, and `auth.py` / `market_auth.py` carried duplicate `_schwab_auth_module` helpers, duplicate `MARKET_AUTH_ERRORS`/`MARKET_PROBE_ERRORS` tuples, an unused `_SchwabAuthProxy`, a dead `auth.main()`, and a defensive fallback in `_get_or_create_locked_client` that could silently return an unmanaged client if `easy_client` returned without writing tokens.
+- **Fix:** dropped `token_json` via in-place `ALTER TABLE DROP COLUMN` migration in `TokenManager._ensure_state_db`, and the same migration prunes rows whose `token_path` file no longer exists. Removed `token_json` from `_upsert_state` and renamed `storage_mode` to `file+sqlite_sidecar` so the label reflects that the JSON file is canonical and SQLite is just locks + metadata. Moved `schwab_auth_module()` to `auth_tokens.py` as the shared lazy-import helper; `auth.py` and `market_auth.py` now import it. Removed `_SchwabAuthProxy`, dead `auth.main()`, and the duplicate market error tuples (now aliased to `AUTH_*`). Replaced the silent fallback with an explicit `ConfigError` when `easy_client` finishes without a token file. Test patches retargeted from `src.schwab_client.auth.auth.*` to `schwab.auth.*` so they survive the proxy removal.
+- **Follow-up:** if SQLite ever needs to be a true backing/recovery source, wire the read path to it (and migrate writers back) — don't half-wire it. Refresh tokens can still be invalidated server-side before their nominal 7-day expiry, so the live probes from the 2026-04-16 entry remain the only reliable freshness check.
+
 ## 2026-04-25 — Local security sweep found vulnerable deps and permissive private-store defaults
 
 - **Symptom:** the repo passed its normal lint/type/test gates while runtime dependency audit still found vulnerable locked packages, and OAuth token/private SQLite files inherited the caller's default umask.

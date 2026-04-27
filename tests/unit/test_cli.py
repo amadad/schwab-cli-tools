@@ -260,7 +260,7 @@ class TestAuthAdminCommands:
         mock_manager.get_storage_info.return_value = {
             "token_path": "/tmp/token.json",
             "db_path": "/tmp/tokens.db",
-            "storage_mode": "token_json+sqlite_sidecar",
+            "storage_mode": "file+sqlite_sidecar",
             "locking": "sqlite_begin_exclusive",
         }
         mock_manager_cls.return_value = mock_manager
@@ -290,7 +290,7 @@ class TestAuthAdminCommands:
         mock_manager.get_storage_info.return_value = {
             "token_path": "/tmp/token.json",
             "db_path": "/tmp/tokens.db",
-            "storage_mode": "token_json+sqlite_sidecar",
+            "storage_mode": "file+sqlite_sidecar",
             "locking": "sqlite_begin_exclusive",
         }
         mock_manager.db_path = "/tmp/tokens.db"
@@ -321,7 +321,7 @@ class TestAuthAdminCommands:
         mock_manager.get_storage_info.return_value = {
             "token_path": "/tmp/token.json",
             "db_path": "/tmp/tokens.db",
-            "storage_mode": "token_json+sqlite_sidecar",
+            "storage_mode": "file+sqlite_sidecar",
             "locking": "sqlite_begin_exclusive",
         }
         mock_manager_cls.return_value = mock_manager

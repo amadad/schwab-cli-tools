@@ -317,52 +317,89 @@ class TestGetAuthenticatedClient:
         with pytest.raises(ConfigError, match="Missing Schwab credentials"):
             get_authenticated_client()
 
-    @patch("src.schwab_client.auth.auth.easy_client")
-    def test_returns_client_with_valid_creds(self, mock_easy, monkeypatch, tmp_path):
-        """Test returns client when credentials valid"""
+    @staticmethod
+    def _write_token_side_effect(token_path: Path):
+        def _side_effect(**kwargs):
+            Path(kwargs["token_path"]).write_text(
+                json.dumps(
+                    {
+                        "creation_timestamp": datetime.now().isoformat(),
+                        "token": {
+                            "access_token": "test",
+                            "expires_at": datetime.now().timestamp(),
+                        },
+                    }
+                )
+            )
+            return Mock()
+
+        del token_path
+        return _side_effect
+
+    @patch("schwab.auth.easy_client")
+    @patch("schwab.auth.client_from_access_functions")
+    def test_returns_client_with_valid_creds(
+        self, mock_managed, mock_easy, monkeypatch, tmp_path
+    ):
+        """Test returns managed client when credentials valid"""
         monkeypatch.setenv("SCHWAB_INTEL_APP_KEY", "test_key")
         monkeypatch.setenv("SCHWAB_INTEL_CLIENT_SECRET", "test_secret")
 
-        mock_client = Mock()
-        mock_easy.return_value = mock_client
+        managed = Mock()
+        managed.token_age.return_value = 0
+        mock_managed.return_value = managed
+        token_path = tmp_path / "token.json"
+        mock_easy.side_effect = self._write_token_side_effect(token_path)
 
-        result = get_authenticated_client(token_path=tmp_path / "token.json")
+        result = get_authenticated_client(token_path=token_path)
 
-        assert result == mock_client
+        assert result == managed
         mock_easy.assert_called_once()
 
-    @patch("src.schwab_client.auth.auth.easy_client")
-    def test_uses_env_credentials(self, mock_easy, monkeypatch, tmp_path):
+    @patch("schwab.auth.easy_client")
+    @patch("schwab.auth.client_from_access_functions")
+    def test_uses_env_credentials(self, mock_managed, mock_easy, monkeypatch, tmp_path):
         """Test uses credentials from environment"""
         monkeypatch.setenv("SCHWAB_INTEL_APP_KEY", "env_key")
         monkeypatch.setenv("SCHWAB_INTEL_CLIENT_SECRET", "env_secret")
 
-        mock_easy.return_value = Mock()
+        managed = Mock()
+        managed.token_age.return_value = 0
+        mock_managed.return_value = managed
+        token_path = tmp_path / "token.json"
+        mock_easy.side_effect = self._write_token_side_effect(token_path)
 
-        get_authenticated_client(token_path=tmp_path / "token.json")
+        get_authenticated_client(token_path=token_path)
 
         call_kwargs = mock_easy.call_args[1]
         assert call_kwargs["api_key"] == "env_key"
         assert call_kwargs["app_secret"] == "env_secret"
 
-    @patch("src.schwab_client.auth.auth.easy_client")
-    def test_uses_explicit_credentials_over_env(self, mock_easy, monkeypatch, tmp_path):
+    @patch("schwab.auth.easy_client")
+    @patch("schwab.auth.client_from_access_functions")
+    def test_uses_explicit_credentials_over_env(
+        self, mock_managed, mock_easy, monkeypatch, tmp_path
+    ):
         """Test explicit credentials override environment"""
         monkeypatch.setenv("SCHWAB_INTEL_APP_KEY", "env_key")
         monkeypatch.setenv("SCHWAB_INTEL_CLIENT_SECRET", "env_secret")
 
-        mock_easy.return_value = Mock()
+        managed = Mock()
+        managed.token_age.return_value = 0
+        mock_managed.return_value = managed
+        token_path = tmp_path / "token.json"
+        mock_easy.side_effect = self._write_token_side_effect(token_path)
 
         get_authenticated_client(
-            api_key="explicit_key", app_secret="explicit_secret", token_path=tmp_path / "token.json"
+            api_key="explicit_key", app_secret="explicit_secret", token_path=token_path
         )
 
         call_kwargs = mock_easy.call_args[1]
         assert call_kwargs["api_key"] == "explicit_key"
         assert call_kwargs["app_secret"] == "explicit_secret"
 
-    @patch("src.schwab_client.auth.auth.easy_client")
-    @patch("src.schwab_client.auth.auth.client_from_access_functions")
+    @patch("schwab.auth.easy_client")
+    @patch("schwab.auth.client_from_access_functions")
     def test_creates_token_directory(
         self, mock_client_from_access, mock_easy, monkeypatch, tmp_path
     ):
@@ -392,8 +429,8 @@ class TestGetAuthenticatedClient:
 
         assert nested_path.parent.exists()
 
-    @patch("src.schwab_client.auth.auth.easy_client")
-    @patch("src.schwab_client.auth.auth.client_from_access_functions")
+    @patch("schwab.auth.easy_client")
+    @patch("schwab.auth.client_from_access_functions")
     def test_get_authenticated_client_updates_sidecar_state(
         self,
         mock_client_from_access,

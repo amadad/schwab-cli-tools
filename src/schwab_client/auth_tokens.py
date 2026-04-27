@@ -10,6 +10,7 @@ import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta
+from functools import cache
 from pathlib import Path
 
 import httpx
@@ -54,6 +55,14 @@ def suppress_authlib_jose_warning() -> Iterator[None]:
             module="websockets\\.legacy",
         )
         yield
+
+
+@cache
+def schwab_auth_module():
+    """Lazy import of ``schwab.auth`` with deprecation warnings suppressed."""
+    with suppress_authlib_jose_warning():
+        from schwab import auth as schwab_auth
+    return schwab_auth
 
 
 def oauth_error_type() -> type[Exception]:
@@ -203,7 +212,6 @@ class TokenManager:
                 """
                 CREATE TABLE IF NOT EXISTS token_state (
                     token_path TEXT PRIMARY KEY,
-                    token_json TEXT NOT NULL,
                     created_at TEXT,
                     expires_at TEXT,
                     updated_at TEXT NOT NULL,
@@ -211,6 +219,16 @@ class TokenManager:
                 )
                 """
             )
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(token_state)")}
+            if "token_json" in cols:
+                conn.execute("ALTER TABLE token_state DROP COLUMN token_json")
+                orphans = [
+                    row[0]
+                    for row in conn.execute("SELECT token_path FROM token_state").fetchall()
+                    if not Path(row[0]).exists()
+                ]
+                for orphan in orphans:
+                    conn.execute("DELETE FROM token_state WHERE token_path = ?", (orphan,))
 
     @contextmanager
     def auth_lock(
@@ -266,15 +284,13 @@ class TokenManager:
                 """
                 INSERT INTO token_state (
                     token_path,
-                    token_json,
                     created_at,
                     expires_at,
                     updated_at,
                     file_mtime
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(token_path) DO UPDATE SET
-                    token_json=excluded.token_json,
                     created_at=excluded.created_at,
                     expires_at=excluded.expires_at,
                     updated_at=excluded.updated_at,
@@ -282,7 +298,6 @@ class TokenManager:
                 """,
                 (
                     str(self.token_path),
-                    json.dumps(tokens),
                     created_at,
                     expires_at,
                     datetime.now().isoformat(),
@@ -387,7 +402,7 @@ class TokenManager:
         return {
             "token_path": str(self.token_path),
             "db_path": str(self.db_path),
-            "storage_mode": "token_json+sqlite_sidecar",
+            "storage_mode": "file+sqlite_sidecar",
             "locking": "sqlite_begin_exclusive",
         }
 

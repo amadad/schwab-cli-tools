@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import os
-from functools import cache
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -25,7 +24,7 @@ from src.schwab_client.auth_tokens import (
     resolve_data_dir,
     resolve_token_db_path,
     resolve_token_path,
-    suppress_authlib_jose_warning,
+    schwab_auth_module,
 )
 from src.schwab_client.secure_files import ensure_sensitive_dir
 
@@ -48,21 +47,6 @@ __all__ = [
     "resolve_token_path",
     "verify_portfolio_token_live",
 ]
-
-
-@cache
-def _schwab_auth_module():
-    with suppress_authlib_jose_warning():
-        from schwab import auth as schwab_auth
-    return schwab_auth
-
-
-class _SchwabAuthProxy:
-    def __getattr__(self, name: str):
-        return getattr(_schwab_auth_module(), name)
-
-
-auth = _SchwabAuthProxy()
 
 
 def verify_portfolio_token_live() -> tuple[bool, str | None]:
@@ -98,7 +82,7 @@ def _build_locked_client(
     manager: TokenManager,
     asyncio: bool = False,
 ):
-    return auth.client_from_access_functions(
+    return schwab_auth_module().client_from_access_functions(
         api_key=api_key,
         app_secret=app_secret,
         token_read_func=manager.read_token_object,
@@ -137,7 +121,7 @@ def _get_or_create_locked_client(
 
     if client is None:
         with manager.auth_lock() as conn:
-            bootstrap_client = auth.easy_client(
+            schwab_auth_module().easy_client(
                 api_key=api_key,
                 app_secret=app_secret,
                 callback_url=callback_url,
@@ -147,7 +131,9 @@ def _get_or_create_locked_client(
             manager.sync_state_from_file(conn=conn)
 
         if not manager.tokens_exist():
-            return bootstrap_client
+            raise ConfigError(
+                f"OAuth bootstrap completed but no token was written to {token_path}"
+            )
 
         client = _build_locked_client(
             api_key=api_key,
@@ -219,7 +205,7 @@ def authenticate_interactive(
     print()
 
     with manager.auth_lock() as conn:
-        auth.client_from_login_flow(
+        schwab_auth_module().client_from_login_flow(
             api_key=api_key,
             app_secret=app_secret,
             callback_url=callback_url,
@@ -281,7 +267,7 @@ def authenticate_manual(
     print()
 
     with manager.auth_lock() as conn:
-        auth.client_from_manual_flow(
+        schwab_auth_module().client_from_manual_flow(
             api_key=api_key,
             app_secret=app_secret,
             callback_url=callback_url,
@@ -299,27 +285,3 @@ def authenticate_manual(
     )
 
 
-def main():
-    """CLI entry point for authentication."""
-    try:
-        client = authenticate_interactive()
-
-        response = client.get_account_numbers()
-        if response.status_code == 200:
-            accounts = response.json()
-            print(f"Found {len(accounts)} accounts")
-            print("Authentication complete!")
-        else:
-            print(f"Warning: API test returned {response.status_code}")
-
-    except AUTH_RECOVERY_ERRORS as exc:
-        print(f"Authentication failed: {exc}")
-        return 1
-
-    return 0
-
-
-if __name__ == "__main__":
-    import sys
-
-    sys.exit(main())

@@ -10,30 +10,26 @@ Usage:
 
 import argparse
 import os
-import sqlite3
 import sys
-from functools import cache
 from pathlib import Path
 
-import httpx
 from dotenv import load_dotenv
 
-from src.core.errors import ConfigError
 from src.schwab_client.auth_tokens import (
+    AUTH_PROBE_ERRORS,
+    AUTH_RECOVERY_ERRORS,
     TOKEN_MAX_AGE_SECONDS,
     TokenManager,
     get_token_manager,
     oauth_error_type,
     resolve_token_path,
-    suppress_authlib_jose_warning,
+    schwab_auth_module,
 )
 from src.schwab_client.secure_files import ensure_sensitive_dir
 
 load_dotenv()
 
 MARKET_TOKEN_PATH_ENV = "SCHWAB_MARKET_TOKEN_PATH"
-MARKET_AUTH_ERRORS = (ConfigError, OSError, sqlite3.Error, ValueError, TypeError, RuntimeError)
-MARKET_PROBE_ERRORS = (*MARKET_AUTH_ERRORS, httpx.HTTPStatusError)
 
 
 def resolve_market_token_path() -> Path:
@@ -45,13 +41,6 @@ def resolve_market_token_path() -> Path:
 
 # Separate token file for market data
 MARKET_TOKEN_PATH = resolve_market_token_path()
-
-
-@cache
-def _schwab_auth_module():
-    with suppress_authlib_jose_warning():
-        from schwab import auth as schwab_auth
-    return schwab_auth
 
 
 def verify_market_token_live() -> tuple[bool, str | None]:
@@ -73,7 +62,7 @@ def verify_market_token_live() -> tuple[bool, str | None]:
         resp = client.get_quote("$SPX")
         resp.raise_for_status()
         return True, None
-    except (*MARKET_PROBE_ERRORS, oauth_error_type()) as exc:
+    except (*AUTH_PROBE_ERRORS, oauth_error_type()) as exc:
         return False, str(exc)
 
 
@@ -82,7 +71,7 @@ def _build_managed_market_client(
     app_secret: str,
     manager: TokenManager,
 ):
-    return _schwab_auth_module().client_from_access_functions(
+    return schwab_auth_module().client_from_access_functions(
         api_key=api_key,
         app_secret=app_secret,
         token_read_func=manager.read_token_object,
@@ -170,7 +159,7 @@ def authenticate_market_data(args: argparse.Namespace | None = None):
 
     try:
         with manager.auth_lock() as conn:
-            _schwab_auth_module().client_from_login_flow(
+            schwab_auth_module().client_from_login_flow(
                 api_key=api_key,
                 app_secret=app_secret,
                 callback_url=callback_url,
@@ -203,7 +192,7 @@ def authenticate_market_data(args: argparse.Namespace | None = None):
 
         return client
 
-    except MARKET_AUTH_ERRORS as e:
+    except AUTH_RECOVERY_ERRORS as e:
         print(f"\nAuthentication failed: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -247,7 +236,7 @@ def authenticate_market_data_manual(
 
     try:
         with manager.auth_lock() as conn:
-            _schwab_auth_module().client_from_manual_flow(
+            schwab_auth_module().client_from_manual_flow(
                 api_key=api_key,
                 app_secret=app_secret,
                 callback_url=callback_url,
@@ -278,7 +267,7 @@ def authenticate_market_data_manual(
 
         return client
 
-    except MARKET_AUTH_ERRORS as e:
+    except AUTH_RECOVERY_ERRORS as e:
         print(f"\nAuthentication failed: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -309,13 +298,13 @@ def get_market_client():
             if client.token_age() >= TOKEN_MAX_AGE_SECONDS:
                 manager.delete_tokens()
                 client = None
-        except MARKET_AUTH_ERRORS:
+        except AUTH_RECOVERY_ERRORS:
             manager.delete_tokens()
             client = None
 
     if client is None:
         with manager.auth_lock() as conn:
-            _schwab_auth_module().easy_client(
+            schwab_auth_module().easy_client(
                 api_key=api_key,
                 app_secret=app_secret,
                 callback_url=callback_url,
