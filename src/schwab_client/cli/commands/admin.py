@@ -15,6 +15,7 @@ from ...auth import authenticate_interactive, authenticate_manual, verify_portfo
 from ...auth_tokens import TokenManager, resolve_data_dir, resolve_token_path
 from ...market_auth import (
     authenticate_market_data,
+    resolve_market_callback_url,
     resolve_market_token_path,
     verify_market_token_live,
 )
@@ -167,7 +168,7 @@ def cmd_doctor(*, output_mode: str = "text") -> None:
         market_creds = {
             "app_key": bool(os.getenv("SCHWAB_MARKET_APP_KEY")),
             "app_secret": bool(os.getenv("SCHWAB_MARKET_CLIENT_SECRET")),
-            "callback_url": os.getenv("SCHWAB_MARKET_CALLBACK_URL", "https://127.0.0.1:8002"),
+            "callback_url": resolve_market_callback_url(),
         }
 
         portfolio_manager = TokenManager(token_path=portfolio_token_path)

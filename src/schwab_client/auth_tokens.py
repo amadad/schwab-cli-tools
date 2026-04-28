@@ -189,11 +189,17 @@ class TokenManager:
 
     def __init__(
         self,
-        token_path: Path = DEFAULT_TOKEN_PATH,
+        token_path: Path | None = None,
         db_path: Path | None = None,
     ):
-        self.token_path = Path(token_path)
-        self.db_path = Path(db_path) if db_path is not None else resolve_token_db_path(token_path)
+        self.token_path = (
+            Path(token_path).expanduser() if token_path is not None else resolve_token_path()
+        )
+        self.db_path = (
+            Path(db_path).expanduser()
+            if db_path is not None
+            else resolve_token_db_path(self.token_path)
+        )
         ensure_sensitive_dir(self.token_path.parent)
         prepare_sensitive_file(self.db_path)
         self._ensure_state_db()
@@ -420,4 +426,4 @@ def get_token_manager(
     db_path: Path | None = None,
 ) -> TokenManager:
     """Create a token manager using default portfolio token path when omitted."""
-    return TokenManager(token_path=token_path or DEFAULT_TOKEN_PATH, db_path=db_path)
+    return TokenManager(token_path=token_path, db_path=db_path)

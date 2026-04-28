@@ -90,7 +90,7 @@ instead of extending the main `schwab` parser.
 - Prefer the root auth flow: `schwab auth`, `schwab auth login --portfolio`, `schwab auth login --market`.
 - For headless/SSH auth, use `schwab auth login --portfolio --manual` or `schwab auth login --market --manual`.
 - `schwab auth --json` / `schwab doctor --json` perform live API probes (`get_account_numbers()` for portfolio, `get_quote("$SPX")` for market) and report `live_verified: true/false`. If a token file looks valid but the server rejects it, `valid` is overridden to `false`.
-- If the dedicated market OAuth app fails with `invalid_client` / `Unauthorized`, reuse the working `SCHWAB_INTEL_*` app values for `SCHWAB_MARKET_*` in local `.env`; the market token still lives in the separate market token path.
+- If the dedicated market OAuth app fails with `invalid_client` / `Unauthorized`, reuse the working `SCHWAB_INTEL_*` app values for `SCHWAB_MARKET_*` in local `.env`; when those credentials match and no market-specific token/callback override is set, the market rail reuses the portfolio callback URL and token file automatically.
 - Trading requires **thinkorswim enablement** on schwab.com for each account.
   Without it, orders fail with "No trades are currently allowed".
 

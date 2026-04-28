@@ -1,5 +1,12 @@
 # Solutions Log
 
+## 2026-04-27 — Market auth kept invalidating itself when reusing the portfolio OAuth app
+
+- **Symptom:** market auth could report `refresh_token_authentication_error` / `unsupported_token_type` even though the token file looked locally fresh. This recurred after switching the dedicated market app to the same `SCHWAB_INTEL_*` OAuth app used by portfolio auth.
+- **Root cause:** one Schwab OAuth client registration was being used with two local refresh-token files (`schwab_token.json` and `schwab_market_token.json`). Schwab can rotate or revoke refresh tokens per OAuth app/user, so the two files competed with each other.
+- **Fix:** market auth now resolves its callback URL and token path at call time. When `SCHWAB_MARKET_APP_KEY` / `SCHWAB_MARKET_CLIENT_SECRET` match the portfolio credentials and no market-specific token/callback override is set, the market rail reuses the portfolio callback URL and token file. Explicit market auth settings still win for a different Schwab login or a genuinely separate market OAuth app.
+- **Follow-up:** keep `SCHWAB_MARKET_TOKEN_PATH` unset unless you intentionally need a distinct market auth profile. `schwab doctor --json` should show the same token path for portfolio and market when credentials are shared by default.
+
 ## 2026-04-27 — Token sidecar carried a half-wired column and stale rows from a prior data dir
 
 - **Symptom:** every token refresh wrote a `token_json` column in `tokens.db` that no read path consumed (`read_token_object` only loaded the JSON file, with `token_json` never SELECTed), so we paid a dual-write hazard for nothing. The same DB also carried an orphan row from a previous `~/.schwab-cli-tools/...` data dir, and `auth.py` / `market_auth.py` carried duplicate `_schwab_auth_module` helpers, duplicate `MARKET_AUTH_ERRORS`/`MARKET_PROBE_ERRORS` tuples, an unused `_SchwabAuthProxy`, a dead `auth.main()`, and a defensive fallback in `_get_or_create_locked_client` that could silently return an unmanaged client if `easy_client` returned without writing tokens.
@@ -39,8 +46,8 @@
 ## 2026-04-15 — Dedicated market OAuth app could fail headless auth even while portfolio auth still worked
 
 - **Symptom:** `schwab auth login --market --manual` could die at the Schwab authorize step with `invalid_client` / `Unauthorized`, while portfolio auth still worked and the market token remained missing.
-- **Fix:** verified the headless/manual flow itself was sound by completing market auth with the working portfolio OAuth app, then updated local `.env` so `SCHWAB_MARKET_APP_KEY`, `SCHWAB_MARKET_CLIENT_SECRET`, and `SCHWAB_MARKET_CALLBACK_URL` mirror `SCHWAB_INTEL_*`. Market auth now succeeds again while still writing to the separate `schwab_market_token.json` token slot.
-- **Follow-up:** if a separate market app is reintroduced later, verify its Schwab-side callback/app registration before switching the local env back.
+- **Fix:** verified the headless/manual flow itself was sound by completing market auth with the working portfolio OAuth app, then updated local `.env` so `SCHWAB_MARKET_APP_KEY` and `SCHWAB_MARKET_CLIENT_SECRET` mirror `SCHWAB_INTEL_*`.
+- **Follow-up:** if a separate market app is reintroduced later, verify its Schwab-side callback/app registration before switching the local env back. When market credentials mirror portfolio credentials, the market rail should share the portfolio token file.
 
 ## 2026-04-15 — Morning brief state could drift across snapshots, files, and legacy sidecar DBs
 

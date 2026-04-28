@@ -27,10 +27,10 @@ then prompts you to paste the callback URL. Use this for headless servers or SSH
 Both auth commands support `--manual`.
 
 If the dedicated market OAuth app starts failing with `invalid_client` / `Unauthorized`,
-point `SCHWAB_MARKET_APP_KEY`, `SCHWAB_MARKET_CLIENT_SECRET`, and
-`SCHWAB_MARKET_CALLBACK_URL` at the working `SCHWAB_INTEL_*` values in local `.env`.
-That keeps market auth working while still storing the token separately under the market
-slot (`SCHWAB_MARKET_TOKEN_PATH` / `schwab_market_token.json`).
+point `SCHWAB_MARKET_APP_KEY` and `SCHWAB_MARKET_CLIENT_SECRET` at the working
+`SCHWAB_INTEL_*` values in local `.env`. When those credentials match and no
+market-specific token/callback override is set, the CLI reuses the portfolio callback URL
+and token file, avoiding competing refresh tokens for the same Schwab OAuth app.
 
 ### thinkorswim Enablement (Required for Trading)
 
@@ -45,8 +45,9 @@ Read-only access (positions, balances, quotes) works without this step.
 
 Tokens default to `~/.cli-schwab/tokens`. In this repo, keep tokens in
 `./tokens` (gitignored) by setting `SCHWAB_CLI_DATA_DIR=.` or explicit
-`SCHWAB_TOKEN_PATH` / `SCHWAB_MARKET_TOKEN_PATH`. A sibling SQLite `tokens.db`
-sidecar is created automatically for local locking and cached token metadata.
+`SCHWAB_TOKEN_PATH`; set `SCHWAB_MARKET_TOKEN_PATH` only for an intentional
+distinct market auth profile. A sibling SQLite `tokens.db` sidecar is created
+automatically for local locking and cached token metadata.
 
 `schwab auth --json`, `schwab auth --market --json`, and `schwab doctor --json`
 now perform **live API probes** (portfolio: `get_account_numbers()`, market:
@@ -83,13 +84,12 @@ SCHWAB_HISTORY_DB_PATH=./private/history/schwab_history.db
 SCHWAB_MANUAL_ACCOUNTS_PATH=./private/notes/manual_accounts.json
 SCHWAB_POLICY_PATH=./private/policy.json
 SCHWAB_ADVISOR_DB_PATH=./private/advisor/advisor.db
-# Optional explicit token paths:
+# Optional explicit token path:
 SCHWAB_TOKEN_PATH=./tokens/schwab_token.json
-SCHWAB_MARKET_TOKEN_PATH=./tokens/schwab_market_token.json
+# Set SCHWAB_MARKET_TOKEN_PATH only for an intentional distinct market auth profile.
 # If the dedicated market app is broken, local .env can reuse the portfolio app:
 # SCHWAB_MARKET_APP_KEY=${SCHWAB_INTEL_APP_KEY}
 # SCHWAB_MARKET_CLIENT_SECRET=${SCHWAB_INTEL_CLIENT_SECRET}
-# SCHWAB_MARKET_CALLBACK_URL=${SCHWAB_INTEL_CALLBACK_URL}
 # Optional model override for schwab-advisor recommend:
 SCHWAB_ADVISOR_MODEL_COMMAND='codex exec -m gpt-5.4 --skip-git-repo-check --cd .'
 ```

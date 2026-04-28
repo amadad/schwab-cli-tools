@@ -1,6 +1,7 @@
 """Tests for Schwab authentication and token management"""
 
 import json
+import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +11,7 @@ import pytest
 
 from src.core.errors import ConfigError
 from src.schwab_client.auth import TokenManager, get_authenticated_client, resolve_data_dir
+from src.schwab_client.market_auth import resolve_market_callback_url, resolve_market_token_path
 
 
 class TestPathResolution:
@@ -23,6 +25,60 @@ class TestPathResolution:
 
         assert path.name == ".cli-schwab"
         assert "Madad" not in str(path)
+
+    @patch.dict(
+        os.environ,
+        {
+            "SCHWAB_CLI_DATA_DIR": "/tmp/schwab-data",
+            "SCHWAB_INTEL_APP_KEY": "same-key",
+            "SCHWAB_INTEL_CLIENT_SECRET": "same-secret",
+            "SCHWAB_INTEL_CALLBACK_URL": "https://127.0.0.1:8001",
+            "SCHWAB_MARKET_APP_KEY": "same-key",
+            "SCHWAB_MARKET_CLIENT_SECRET": "same-secret",
+        },
+        clear=True,
+    )
+    def test_market_auth_reuses_portfolio_token_for_same_oauth_app_by_default(self):
+        assert resolve_market_token_path() == Path("/tmp/schwab-data/tokens/schwab_token.json")
+        assert resolve_market_callback_url() == "https://127.0.0.1:8001"
+
+    @patch.dict(
+        os.environ,
+        {
+            "SCHWAB_CLI_DATA_DIR": "/tmp/schwab-data",
+            "SCHWAB_INTEL_APP_KEY": "same-key",
+            "SCHWAB_INTEL_CLIENT_SECRET": "same-secret",
+            "SCHWAB_MARKET_APP_KEY": "same-key",
+            "SCHWAB_MARKET_CLIENT_SECRET": "same-secret",
+            "SCHWAB_MARKET_CALLBACK_URL": "https://127.0.0.1:8002",
+            "SCHWAB_MARKET_TOKEN_PATH": "/tmp/market-token.json",
+        },
+        clear=True,
+    )
+    def test_explicit_market_auth_settings_override_same_oauth_app_defaults(self):
+        assert resolve_market_token_path() == Path("/tmp/market-token.json")
+        assert resolve_market_callback_url() == "https://127.0.0.1:8002"
+
+    @patch.dict(
+        os.environ,
+        {
+            "SCHWAB_CLI_DATA_DIR": "/tmp/schwab-data",
+            "SCHWAB_INTEL_APP_KEY": "portfolio-key",
+            "SCHWAB_INTEL_CLIENT_SECRET": "portfolio-secret",
+            "SCHWAB_MARKET_APP_KEY": "market-key",
+            "SCHWAB_MARKET_CLIENT_SECRET": "market-secret",
+        },
+        clear=True,
+    )
+    def test_market_auth_uses_market_token_for_distinct_oauth_app(self):
+        assert resolve_market_token_path() == Path("/tmp/schwab-data/tokens/schwab_market_token.json")
+        assert resolve_market_callback_url() == "https://127.0.0.1:8002"
+
+    def test_token_manager_default_path_is_resolved_at_call_time(self, tmp_path):
+        with patch.dict(os.environ, {"SCHWAB_CLI_DATA_DIR": str(tmp_path)}, clear=True):
+            manager = TokenManager()
+
+        assert manager.token_path == tmp_path / "tokens" / "schwab_token.json"
 
 
 class TestTokenManager:

@@ -1,8 +1,8 @@
 """
 Authentication for Schwab Market Data API
 
-Separate auth flow for market data (quotes, VIX, sectors).
-Uses different credentials and token file from portfolio API.
+Auth flow for market data (quotes, VIX, sectors).
+Uses a separate token only when market data uses a separate OAuth app.
 
 Usage:
     uv run schwab-market-auth
@@ -15,6 +15,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from src.core.errors import ConfigError
 from src.schwab_client.auth_tokens import (
     AUTH_PROBE_ERRORS,
     AUTH_RECOVERY_ERRORS,
@@ -32,15 +33,40 @@ load_dotenv()
 MARKET_TOKEN_PATH_ENV = "SCHWAB_MARKET_TOKEN_PATH"
 
 
+def _market_uses_portfolio_oauth_app() -> bool:
+    portfolio_key = os.getenv("SCHWAB_INTEL_APP_KEY")
+    portfolio_secret = os.getenv("SCHWAB_INTEL_CLIENT_SECRET")
+    market_key = os.getenv("SCHWAB_MARKET_APP_KEY")
+    market_secret = os.getenv("SCHWAB_MARKET_CLIENT_SECRET")
+    return bool(
+        portfolio_key
+        and portfolio_secret
+        and market_key == portfolio_key
+        and market_secret == portfolio_secret
+    )
+
+
 def resolve_market_token_path() -> Path:
+    if os.getenv(MARKET_TOKEN_PATH_ENV):
+        return resolve_token_path(
+            token_path_env=MARKET_TOKEN_PATH_ENV,
+            token_filename="schwab_market_token.json",
+        )
+    if _market_uses_portfolio_oauth_app():
+        return resolve_token_path()
     return resolve_token_path(
         token_path_env=MARKET_TOKEN_PATH_ENV,
         token_filename="schwab_market_token.json",
     )
 
 
-# Separate token file for market data
-MARKET_TOKEN_PATH = resolve_market_token_path()
+def resolve_market_callback_url() -> str:
+    callback_url = os.getenv("SCHWAB_MARKET_CALLBACK_URL")
+    if callback_url:
+        return callback_url
+    if _market_uses_portfolio_oauth_app():
+        return os.getenv("SCHWAB_INTEL_CALLBACK_URL", "https://127.0.0.1:8001")
+    return "https://127.0.0.1:8002"
 
 
 def verify_market_token_live() -> tuple[bool, str | None]:
@@ -53,7 +79,7 @@ def verify_market_token_live() -> tuple[bool, str | None]:
     if not api_key or not app_secret:
         return False, "credentials_missing"
 
-    manager = get_token_manager(token_path=MARKET_TOKEN_PATH)
+    manager = get_token_manager(token_path=resolve_market_token_path())
     if not manager.tokens_exist():
         return False, "token_file_missing"
 
@@ -110,29 +136,26 @@ def parse_args() -> argparse.Namespace:
 
 
 def authenticate_market_data(args: argparse.Namespace | None = None):
-    """
-    Run interactive authentication for Market Data API.
-
-    Uses SCHWAB_MARKET_* credentials (separate from portfolio API).
-    """
+    """Run interactive authentication for Market Data API."""
     args = args or parse_args()
     api_key = os.getenv("SCHWAB_MARKET_APP_KEY")
     app_secret = os.getenv("SCHWAB_MARKET_CLIENT_SECRET")
-    callback_url = os.getenv("SCHWAB_MARKET_CALLBACK_URL", "https://127.0.0.1:8002")
+    callback_url = resolve_market_callback_url()
+    token_path = resolve_market_token_path()
 
     if not api_key or not app_secret:
         print("ERROR: Missing market data credentials.", file=sys.stderr)
         print("Set SCHWAB_MARKET_APP_KEY and SCHWAB_MARKET_CLIENT_SECRET in .env")
         sys.exit(1)
 
-    ensure_sensitive_dir(MARKET_TOKEN_PATH.parent)
+    ensure_sensitive_dir(token_path.parent)
 
     print("\n" + "=" * 60)
     print("SCHWAB MARKET DATA AUTHENTICATION")
     print("=" * 60)
     print(f"\nCallback URL: {callback_url}")
 
-    manager = get_token_manager(token_path=MARKET_TOKEN_PATH)
+    manager = get_token_manager(token_path=token_path)
     info = manager.get_token_info()
     if info.get("exists"):
         if not info.get("valid", True):
@@ -145,7 +168,6 @@ def authenticate_market_data(args: argparse.Namespace | None = None):
         else:
             print("Re-authenticating (forced).")
 
-    # Use manual flow if requested (for headless/SSH)
     if args.manual:
         return authenticate_market_data_manual(
             api_key=api_key,
@@ -163,17 +185,22 @@ def authenticate_market_data(args: argparse.Namespace | None = None):
                 api_key=api_key,
                 app_secret=app_secret,
                 callback_url=callback_url,
-                token_path=str(MARKET_TOKEN_PATH),
+                token_path=str(token_path),
                 callback_timeout=args.timeout,
                 interactive=args.interactive,
                 requested_browser=args.browser,
             )
             manager.sync_state_from_file(conn=conn)
 
+        if not manager.tokens_exist():
+            raise ConfigError(
+                f"OAuth bootstrap completed but no token was written to {token_path}"
+            )
+
         client = _build_managed_market_client(api_key, app_secret, manager)
 
         print("\nAuthentication successful!")
-        print(f"Tokens saved to {MARKET_TOKEN_PATH}")
+        print(f"Tokens saved to {token_path}")
         token_info = manager.get_token_info()
         if token_info.get("expires"):
             print(
@@ -182,7 +209,6 @@ def authenticate_market_data(args: argparse.Namespace | None = None):
                 f"({token_info.get('expires_in_days', 0)} days)"
             )
 
-        # Test with a simple quote request
         print("\nTesting market data access...")
         response = client.get_quote("$SPX")
         if response.status_code == 200:
@@ -240,15 +266,21 @@ def authenticate_market_data_manual(
                 api_key=api_key,
                 app_secret=app_secret,
                 callback_url=callback_url,
-                token_path=str(MARKET_TOKEN_PATH),
+                token_path=str(manager.token_path),
             )
             manager.sync_state_from_file(conn=conn)
+
+        if not manager.tokens_exist():
+            raise ConfigError(
+                "OAuth bootstrap completed but no token was written to "
+                f"{manager.token_path}"
+            )
 
         client = _build_managed_market_client(api_key, app_secret, manager)
 
         print()
         print("Authentication successful!")
-        print(f"Tokens saved to {MARKET_TOKEN_PATH}")
+        print(f"Tokens saved to {manager.token_path}")
         token_info = manager.get_token_info()
         if token_info.get("expires"):
             print(
@@ -257,7 +289,6 @@ def authenticate_market_data_manual(
                 f"({token_info.get('expires_in_days', 0)} days)"
             )
 
-        # Test with a simple quote request
         print("\nTesting market data access...")
         response = client.get_quote("$SPX")
         if response.status_code == 200:
@@ -280,7 +311,8 @@ def get_market_client():
     """
     api_key = os.getenv("SCHWAB_MARKET_APP_KEY")
     app_secret = os.getenv("SCHWAB_MARKET_CLIENT_SECRET")
-    callback_url = os.getenv("SCHWAB_MARKET_CALLBACK_URL", "https://127.0.0.1:8002")
+    callback_url = resolve_market_callback_url()
+    token_path = resolve_market_token_path()
 
     if not api_key or not app_secret:
         raise ValueError(
@@ -288,8 +320,8 @@ def get_market_client():
             "Set SCHWAB_MARKET_APP_KEY and SCHWAB_MARKET_CLIENT_SECRET."
         )
 
-    manager = get_token_manager(token_path=MARKET_TOKEN_PATH)
-    ensure_sensitive_dir(MARKET_TOKEN_PATH.parent)
+    manager = get_token_manager(token_path=token_path)
+    ensure_sensitive_dir(token_path.parent)
 
     client = None
     if manager.tokens_exist():
@@ -308,9 +340,13 @@ def get_market_client():
                 api_key=api_key,
                 app_secret=app_secret,
                 callback_url=callback_url,
-                token_path=str(MARKET_TOKEN_PATH),
+                token_path=str(token_path),
             )
             manager.sync_state_from_file(conn=conn)
+        if not manager.tokens_exist():
+            raise ConfigError(
+                f"OAuth bootstrap completed but no token was written to {token_path}"
+            )
         client = _build_managed_market_client(api_key, app_secret, manager)
 
     return client

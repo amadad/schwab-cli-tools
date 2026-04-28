@@ -84,26 +84,26 @@ locally. It prints a URL you can open on any device (phone, laptop, etc.), then 
 you to paste the callback URL. Both auth commands support this flag.
 
 Market commands (`vix`, `indices`, `sectors`, `market`, `movers`, `futures`) require
-the market auth flow. Token JSON files are stored under `~/.cli-schwab/tokens`
-by default, with a sibling SQLite `tokens.db` sidecar used for local locking and
-cached token metadata. `schwab auth --json` and `schwab doctor --json` perform
+market credentials; by default they reuse the portfolio token when `SCHWAB_MARKET_*`
+credentials match `SCHWAB_INTEL_*`. Token JSON files are stored under
+`~/.cli-schwab/tokens` by default, with a sibling SQLite `tokens.db` sidecar used for
+local locking and cached token metadata. `schwab auth --json` and `schwab doctor --json` perform
 live API probes against Schwab's servers and report `live_verified: true/false`.
 If a token file looks valid locally but the server rejects the refresh token,
 `valid` is overridden to `false` with a `live_error` field. Refresh tokens
 expire after 7 days but Schwab can invalidate them server-side earlier.
 
-If a dedicated `SCHWAB_MARKET_*` app returns `invalid_client` / `Unauthorized`, you can
-still keep a separate market token while reusing the working portfolio OAuth app in
-local `.env`:
+If a dedicated `SCHWAB_MARKET_*` app returns `invalid_client` / `Unauthorized`, point
+`SCHWAB_MARKET_APP_KEY` and `SCHWAB_MARKET_CLIENT_SECRET` at the working portfolio app.
+When the market and portfolio credentials match, and no market-specific token/callback
+override is set, the CLI reuses the portfolio callback URL and token file. This avoids
+competing refresh tokens for the same Schwab OAuth app while still allowing an explicit
+separate token for a different Schwab login.
 
 ```bash
 SCHWAB_MARKET_APP_KEY=${SCHWAB_INTEL_APP_KEY}
 SCHWAB_MARKET_CLIENT_SECRET=${SCHWAB_INTEL_CLIENT_SECRET}
-SCHWAB_MARKET_CALLBACK_URL=${SCHWAB_INTEL_CALLBACK_URL}
 ```
-
-That shares the Schwab app registration, not the token file: the market rail still writes
-to `SCHWAB_MARKET_TOKEN_PATH` / `schwab_market_token.json`.
 
 ## CLI Commands
 
@@ -347,8 +347,8 @@ export SCHWAB_POLICY_PATH=./private/policy.json
 
 # Token paths (override data dir)
 export SCHWAB_TOKEN_PATH=~/.cli-schwab/tokens/schwab_token.json
-export SCHWAB_MARKET_TOKEN_PATH=~/.cli-schwab/tokens/schwab_market_token.json
-# A local SQLite sidecar (tokens.db) is created next to the token files automatically
+# Set SCHWAB_MARKET_TOKEN_PATH only for an intentional distinct market auth profile.
+# A local SQLite sidecar (tokens.db) is created next to the token files automatically.
 
 # Recommendation engine (still exposed via schwab-advisor)
 export SCHWAB_ADVISOR_DB_PATH=./private/advisor/advisor.db

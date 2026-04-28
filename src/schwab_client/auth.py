@@ -43,10 +43,15 @@ __all__ = [
     "get_token_manager",
     "oauth_error_type",
     "resolve_data_dir",
+    "resolve_portfolio_callback_url",
     "resolve_token_db_path",
     "resolve_token_path",
     "verify_portfolio_token_live",
 ]
+
+
+def resolve_portfolio_callback_url() -> str:
+    return os.getenv("SCHWAB_INTEL_CALLBACK_URL", "https://127.0.0.1:8001")
 
 
 def verify_portfolio_token_live() -> tuple[bool, str | None]:
@@ -148,14 +153,15 @@ def _get_or_create_locked_client(
 def get_authenticated_client(
     api_key: str | None = None,
     app_secret: str | None = None,
-    callback_url: str = "https://127.0.0.1:8001",
+    callback_url: str | None = None,
     token_path: Path | None = None,
     asyncio: bool = False,
 ):
     """Get an authenticated Schwab client backed by managed token storage."""
     api_key = api_key or os.getenv("SCHWAB_INTEL_APP_KEY")
     app_secret = app_secret or os.getenv("SCHWAB_INTEL_CLIENT_SECRET")
-    token_path = token_path or DEFAULT_TOKEN_PATH
+    callback_url = callback_url or resolve_portfolio_callback_url()
+    token_path = token_path or resolve_token_path()
 
     if not api_key or not app_secret:
         raise ConfigError(
@@ -179,7 +185,7 @@ def get_authenticated_client(
 def authenticate_interactive(
     api_key: str | None = None,
     app_secret: str | None = None,
-    callback_url: str = "https://127.0.0.1:8001",
+    callback_url: str | None = None,
     token_path: Path | None = None,
     interactive: bool = False,
     requested_browser: str | None = None,
@@ -188,7 +194,8 @@ def authenticate_interactive(
     """Run the browser-based authentication flow and return a managed client."""
     api_key = api_key or os.getenv("SCHWAB_INTEL_APP_KEY")
     app_secret = app_secret or os.getenv("SCHWAB_INTEL_CLIENT_SECRET")
-    token_path = token_path or DEFAULT_TOKEN_PATH
+    callback_url = callback_url or resolve_portfolio_callback_url()
+    token_path = token_path or resolve_token_path()
 
     if not api_key or not app_secret:
         raise ConfigError(
@@ -229,13 +236,14 @@ def authenticate_interactive(
 def authenticate_manual(
     api_key: str | None = None,
     app_secret: str | None = None,
-    callback_url: str = "https://127.0.0.1:8001",
+    callback_url: str | None = None,
     token_path: Path | None = None,
 ):
     """Run the manual authentication flow and return a managed client."""
     api_key = api_key or os.getenv("SCHWAB_INTEL_APP_KEY")
     app_secret = app_secret or os.getenv("SCHWAB_INTEL_CLIENT_SECRET")
-    token_path = token_path or DEFAULT_TOKEN_PATH
+    callback_url = callback_url or resolve_portfolio_callback_url()
+    token_path = token_path or resolve_token_path()
 
     if not api_key or not app_secret:
         raise ConfigError(
@@ -262,7 +270,7 @@ def authenticate_manual(
     print("     THIS IS EXPECTED - don't worry!")
     print()
     print("  5. Copy the FULL URL from your browser's address bar")
-    print("     (starts with https://127.0.0.1:8001/?code=...)")
+    print(f"     (starts with {callback_url}/?code=...)")
     print("  6. Paste it back here")
     print()
 
